@@ -69,12 +69,18 @@
           nativeBuildInputs =
             (with pkgs; [
               # needed for running
-              pkgs.nixgl.auto.nixGLDefault
+              pkgs.nixgl.auto.nixGLNvidia
+              # nice to have
+              just
               # For debugging
               vscode-extensions.vadimcn.vscode-lldb.adapter
             ])
             ++ libraries;
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libraries;
+          shellHook = ''
+            # Needed for nixGL to work correctly
+            export __GLX_VENDOR_LIBRARY_NAME=nvidia
+          '';
         };
       }
     );
