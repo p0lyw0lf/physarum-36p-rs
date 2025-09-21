@@ -1,0 +1,11 @@
+[package]
+name = "physarum-36p-rs"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "physarum"
+path = "src/main.rs"
+
+[dependencies]
+macroquad = "0.4"
