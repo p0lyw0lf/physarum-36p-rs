@@ -8,4 +8,7 @@ name = "physarum"
 path = "src/main.rs"
 
 [dependencies]
-macroquad = "0.4"
+env_logger = "0.11.8"
+pollster = "0.4.0"
+wgpu = "26.0"
+winit = "0.30"
