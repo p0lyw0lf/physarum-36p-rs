@@ -30,19 +30,27 @@ impl Pipeline {
         queue: &wgpu::Queue,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        let buffer = |name: &str, size: u64| {
+        let buffer = |name: &str, size: u64, usage: wgpu::BufferUsages| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&format!("{name}_buffer")),
                 size,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage,
                 mapped_at_creation: false,
             })
         };
 
-        let constants_buffer = buffer("constants", size_of::<Constants>() as u64);
+        let constants_buffer = buffer(
+            "constants",
+            size_of::<Constants>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         queue.write_buffer(&constants_buffer, 0, bytemuck::bytes_of(&CONSTANTS));
 
-        let point_settings_buffer = buffer("point_settings", size_of::<PointSettings>() as u64);
+        let point_settings_buffer = buffer(
+            "point_settings",
+            size_of::<PointSettings>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         // New point settings are written every frame
 
         // Randomly initialize the particles' starting positions and headings
@@ -59,15 +67,22 @@ impl Pipeline {
                 *p = float_as_u16(rand::random_range(0..u16::MAX) as f32 / u16::MAX as f32);
             }
         }
-        let particle_params_buffer = buffer("particles", particles.len() as u64 * 2);
+        let particle_params_buffer = buffer(
+            "particle_params",
+            particles.len() as u64 * 2,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
         queue.write_buffer(
             &particle_params_buffer,
             0,
             bytemuck::cast_slice(particles.as_slice()),
         );
 
-        let particle_counts_buffer =
-            buffer("counter", (SIMULATION_WIDTH * SIMULATION_HEIGHT * 4) as u64);
+        let particle_counts_buffer = buffer(
+            "particle_counts",
+            (SIMULATION_WIDTH * SIMULATION_HEIGHT * 4) as u64,
+            wgpu::BufferUsages::STORAGE,
+        );
         // The counter is re-initialized every frame
 
         let texture =
@@ -128,9 +143,9 @@ impl Pipeline {
                 label: Some("trail_bind_group_layout"),
                 entries: &[
                     // trail_read
-                    texture_entry(1),
+                    texture_entry(0),
                     // trail_write
-                    texture_entry(2),
+                    texture_entry(1),
                 ],
             });
         let state_bind_group_layout =
@@ -351,6 +366,7 @@ impl Pipeline {
 
             compute_pass.set_pipeline(&self.setter_pipeline);
             compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
+            compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
             compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
             compute_pass.dispatch_workgroups(
                 SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
@@ -363,7 +379,9 @@ impl Pipeline {
             compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
             compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
             compute_pass.dispatch_workgroups(
-                (SIMULATION_NUM_PARTICLES / (SIMULATION_WORK_GROUP_SIZE * 4) as usize) as u32,
+                (SIMULATION_NUM_PARTICLES
+                    / (SIMULATION_WORK_GROUP_SIZE * SIMULATION_WORK_GROUP_SIZE) as usize)
+                    as u32,
                 1,
                 1,
             );

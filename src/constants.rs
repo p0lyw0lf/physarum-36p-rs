@@ -2,7 +2,7 @@ use bytemuck::NoUninit;
 
 pub const SIMULATION_WIDTH: u32 = 1280;
 pub const SIMULATION_HEIGHT: u32 = 736;
-pub const SIMULATION_WORK_GROUP_SIZE: u32 = 32;
+pub const SIMULATION_WORK_GROUP_SIZE: u32 = 16;
 pub const SIMULATION_NUM_PARTICLES: usize = 512 * 512 * 22;
 
 /// MUST exactly match the definition in computeshader.wgsl
