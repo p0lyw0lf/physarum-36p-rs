@@ -14,27 +14,45 @@ impl Pipeline {
             label: Some("hardcoded red triangle shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(
                 "
+struct OurVertexShaderOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec4f,
+}
+
 @vertex fn vs(
     @builtin(vertex_index) vertexIndex: u32,
-) -> @builtin(position) vec4f {
+) -> OurVertexShaderOutput {
     let pos = array(
         vec2f( 0.0,  0.5),
         vec2f(-0.5, -0.5),
         vec2f( 0.5, -0.5),
     );
+    var color = array<vec4f, 3>(
+        vec4f(1, 0, 0, 1), // red
+        vec4f(0, 1, 0, 1), // green
+        vec4f(0, 0, 1, 1), // blue
+    );
 
-    return vec4f(pos[vertexIndex], 0.0, 1.0);
+    var vsOutput: OurVertexShaderOutput;
+    vsOutput.position = vec4f(pos[vertexIndex], 0.0, 1.0);
+    vsOutput.color = color[vertexIndex];
+    return vsOutput;
 }
 
-@fragment fn fs() -> @location(0) vec4f {
-    return vec4f(1.0, 0.0, 0.0, 1.0);
+@fragment fn fs(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
+    let cyan = vec4f(0, 1, 1, 1);
+
+    let grid = vec2u(fsInput.position.xy);
+    let checker = (grid.x + grid.y) % 16 > 8;
+
+    return select(fsInput.color, cyan, checker);
 }
 ",
             )),
         });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("our hardcoded red triangle pipeline"),
+            label: Some("our hardcoded rainbow triangle pipeline"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &shader_module,
@@ -89,7 +107,12 @@ impl Pipeline {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &surface_texture_view,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.3,
+                        g: 0.3,
+                        b: 0.3,
+                        a: 1.0,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
                 resolve_target: Default::default(),
