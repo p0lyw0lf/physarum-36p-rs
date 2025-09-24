@@ -85,26 +85,27 @@ impl Pipeline {
         );
         // The counter is re-initialized every frame
 
-        let texture =
-            |label: &str, format: wgpu::TextureFormat, view_formats: &[wgpu::TextureFormat]| {
-                device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(&format!("{label}_texture")),
-                    size: wgpu::Extent3d {
-                        width: SIMULATION_WIDTH,
-                        height: SIMULATION_HEIGHT,
-                        depth_or_array_layers: 1,
-                    },
-                    format,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats,
-                })
-            };
+        let texture = |label: &str,
+                       format: wgpu::TextureFormat,
+                       view_formats: &[wgpu::TextureFormat]| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(&format!("{label}_texture")),
+                size: wgpu::Extent3d {
+                    width: SIMULATION_WIDTH,
+                    height: SIMULATION_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+                format,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+                view_formats,
+            })
+        };
 
-        let trail_read_texture = texture("trail_read", wgpu::TextureFormat::R16Float, &[]);
-        let trail_write_texture = texture("trail_write", wgpu::TextureFormat::R16Float, &[]);
+        let trail_read_texture = texture("trail_read", wgpu::TextureFormat::R32Float, &[]);
+        let trail_write_texture = texture("trail_write", wgpu::TextureFormat::R32Float, &[]);
         let fbo_texture = texture("fbo", wgpu::TextureFormat::Rgba8Unorm, &[]);
 
         // Specifying a bind group layout lets us re-use the same bind group between shaders.
@@ -118,16 +119,19 @@ impl Pipeline {
             },
             count: None,
         };
-        let texture_entry = |i: u32| wgpu::BindGroupLayoutEntry {
-            binding: i,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
+        let storage_texture_entry =
+            |i: u32, access: wgpu::StorageTextureAccess, format: wgpu::TextureFormat| {
+                wgpu::BindGroupLayoutEntry {
+                    binding: i,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access,
+                        format,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                }
+            };
         let constants_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("constants_bind_group_layout"),
@@ -143,9 +147,17 @@ impl Pipeline {
                 label: Some("trail_bind_group_layout"),
                 entries: &[
                     // trail_read
-                    texture_entry(0),
+                    storage_texture_entry(
+                        0,
+                        wgpu::StorageTextureAccess::ReadOnly,
+                        wgpu::TextureFormat::R32Float,
+                    ),
                     // trail_write
-                    texture_entry(1),
+                    storage_texture_entry(
+                        1,
+                        wgpu::StorageTextureAccess::WriteOnly,
+                        wgpu::TextureFormat::R32Float,
+                    ),
                 ],
             });
         let state_bind_group_layout =
@@ -157,7 +169,11 @@ impl Pipeline {
                     // particle_counts
                     buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
                     // fbo_display
-                    texture_entry(2),
+                    storage_texture_entry(
+                        2,
+                        wgpu::StorageTextureAccess::WriteOnly,
+                        wgpu::TextureFormat::Rgba8Unorm,
+                    ),
                 ],
             });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -198,7 +214,9 @@ impl Pipeline {
                 label: Some(&format!("{label}_texture_view")),
                 format,
                 dimension: Some(wgpu::TextureViewDimension::D2),
-                usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                usage: Some(
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+                ),
                 aspect: wgpu::TextureAspect::All,
                 base_mip_level: 0,
                 mip_level_count: None,
@@ -414,10 +432,7 @@ impl Pipeline {
                     label: Some("fbo_texture_view"),
                     format: Some(surface_format.add_srgb_suffix()),
                     dimension: Some(wgpu::TextureViewDimension::D2),
-                    usage: Some(
-                        wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    ),
+                    usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
                     aspect: wgpu::TextureAspect::All,
                     base_mip_level: 0,
                     mip_level_count: None,
