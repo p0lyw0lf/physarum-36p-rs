@@ -1,7 +1,22 @@
 use std::borrow::Cow;
 
+use bytemuck::Pod;
+use bytemuck::Zeroable;
+
+// TODO: use wgsl_bindgen or wgsl_to_wgpu to automatically derive this
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct OurStruct {
+    color: [f32; 4],
+    scale: [f32; 2],
+    offset: [f32; 2],
+}
+
 pub struct Pipeline {
+    uniform_values: OurStruct,
+    uniform_buffer: wgpu::Buffer,
     render_pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
 }
 
 impl Pipeline {
@@ -14,14 +29,16 @@ impl Pipeline {
             label: Some("hardcoded red triangle shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(
                 "
-struct OurVertexShaderOutput {
-    @builtin(position) position: vec4f,
-    @location(0) color: vec4f,
+struct OurStruct {
+    color: vec4f,
+    scale: vec2f,
+    offset: vec2f,
 }
+@group(0) @binding(0) var<uniform> ourStruct: OurStruct;
 
 @vertex fn vs(
     @builtin(vertex_index) vertexIndex: u32,
-) -> OurVertexShaderOutput {
+) -> @builtin(position) vec4f {
     let pos = array(
         vec2f( 0.0,  0.5),
         vec2f(-0.5, -0.5),
@@ -33,23 +50,29 @@ struct OurVertexShaderOutput {
         vec4f(0, 0, 1, 1), // blue
     );
 
-    var vsOutput: OurVertexShaderOutput;
-    vsOutput.position = vec4f(pos[vertexIndex], 0.0, 1.0);
-    vsOutput.color = color[vertexIndex];
-    return vsOutput;
+    return vec4f(
+        pos[vertexIndex] * ourStruct.scale + ourStruct.offset, 0.0, 1.0,
+    );
 }
 
-@fragment fn fs(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
-    let cyan = vec4f(0, 1, 1, 1);
-
-    let grid = vec2u(fsInput.position.xy);
-    let checker = (grid.x + grid.y) % 16 > 8;
-
-    return select(fsInput.color, cyan, checker);
+@fragment fn fs() -> @location(0) vec4f {
+    return ourStruct.color;
 }
 ",
             )),
         });
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("our uniform buffer"),
+            size: size_of::<OurStruct>().try_into().unwrap(),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform_values = OurStruct {
+            color: [0., 1., 0., 1.], // green
+            scale: [0.5, 0.5],
+            offset: [-0.5, -0.25],
+        };
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("our hardcoded rainbow triangle pipeline"),
@@ -77,16 +100,45 @@ struct OurVertexShaderOutput {
             cache: Default::default(),
         });
 
-        Self { render_pipeline }
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("our bind group"),
+            layout: &render_pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &uniform_buffer,
+                    offset: Default::default(),
+                    size: Default::default(),
+                }),
+            }],
+        });
+
+        Self {
+            uniform_values,
+            uniform_buffer,
+            render_pipeline,
+            bind_group,
+        }
     }
 
     pub fn render(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         surface_texture: &wgpu::SurfaceTexture,
         surface_format: wgpu::TextureFormat,
     ) {
+        let width = surface_texture.texture.width() as f32;
+        let height = surface_texture.texture.height() as f32;
+        let aspect = width / height;
+        self.uniform_values.scale = [0.5 / aspect, 0.5];
+
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&self.uniform_values),
+        );
+
         let surface_texture_view =
             surface_texture
                 .texture
@@ -130,6 +182,7 @@ struct OurVertexShaderOutput {
         {
             let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
             pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
