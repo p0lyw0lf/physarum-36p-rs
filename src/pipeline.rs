@@ -1,7 +1,10 @@
 use std::borrow::Cow;
+use std::mem::MaybeUninit;
 
 use bytemuck::Pod;
 use bytemuck::Zeroable;
+
+const NUM_OBJECTS: usize = 100;
 
 // TODO: use wgsl_bindgen or wgsl_to_wgpu to automatically derive this
 #[repr(C)]
@@ -12,11 +15,16 @@ struct OurStruct {
     offset: [f32; 2],
 }
 
-pub struct Pipeline {
+struct ObjectInfo {
     uniform_values: OurStruct,
     uniform_buffer: wgpu::Buffer,
-    render_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    default_scale: f32,
+}
+
+pub struct Pipeline {
+    render_pipeline: wgpu::RenderPipeline,
+    objects: [ObjectInfo; NUM_OBJECTS],
 }
 
 impl Pipeline {
@@ -62,18 +70,6 @@ struct OurStruct {
             )),
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("our uniform buffer"),
-            size: size_of::<OurStruct>().try_into().unwrap(),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let uniform_values = OurStruct {
-            color: [0., 1., 0., 1.], // green
-            scale: [0.5, 0.5],
-            offset: [-0.5, -0.25],
-        };
-
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("our hardcoded rainbow triangle pipeline"),
             layout: None,
@@ -100,24 +96,55 @@ struct OurStruct {
             cache: Default::default(),
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("our bind group"),
-            layout: &render_pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &uniform_buffer,
-                    offset: Default::default(),
-                    size: Default::default(),
-                }),
-            }],
-        });
+        let bind_group_layout = render_pipeline.get_bind_group_layout(0);
+
+        let mut objects = [const { MaybeUninit::<ObjectInfo>::uninit() }; NUM_OBJECTS];
+        for (i, elem) in objects.iter_mut().enumerate() {
+            let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("uniform buffer for obj: {i}")),
+                size: size_of::<OurStruct>().try_into().unwrap(),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let uniform_values = OurStruct {
+                color: [
+                    rand::random_range(0.0..=1.0),
+                    rand::random_range(0.0..=1.0),
+                    rand::random_range(0.0..=1.0),
+                    1.,
+                ],
+                scale: [0.5, 0.5],
+                offset: [
+                    rand::random_range(-0.9..=0.9),
+                    rand::random_range(-0.9..=0.9),
+                ],
+            };
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("bind group for obj: {i}")),
+                layout: &bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                }],
+            });
+            let default_scale = rand::random_range(0.2..=0.5);
+
+            elem.write(ObjectInfo {
+                uniform_values,
+                uniform_buffer,
+                bind_group,
+                default_scale,
+            });
+        }
 
         Self {
-            uniform_values,
-            uniform_buffer,
             render_pipeline,
-            bind_group,
+            // SAFETY: all elements are initialized in the above loop
+            objects: unsafe { std::mem::transmute(objects) },
         }
     }
 
@@ -131,13 +158,6 @@ struct OurStruct {
         let width = surface_texture.texture.width() as f32;
         let height = surface_texture.texture.height() as f32;
         let aspect = width / height;
-        self.uniform_values.scale = [0.5 / aspect, 0.5];
-
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&self.uniform_values),
-        );
 
         let surface_texture_view =
             surface_texture
@@ -182,8 +202,16 @@ struct OurStruct {
         {
             let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
             pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            for obj in self.objects.iter_mut() {
+                obj.uniform_values.scale = [obj.default_scale / aspect, obj.default_scale];
+                queue.write_buffer(
+                    &obj.uniform_buffer,
+                    0,
+                    bytemuck::bytes_of(&obj.uniform_values),
+                );
+                pass.set_bind_group(0, &obj.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
         }
 
         let command_buffer = encoder.finish();
