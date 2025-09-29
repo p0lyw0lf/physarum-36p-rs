@@ -83,6 +83,7 @@ struct ObjectInfo {
 
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
+    vertex_buffer: wgpu::Buffer,
     objects: [ObjectInfo; NUM_OBJECTS],
     dynamic_storage_values: [DynamicProps; NUM_OBJECTS],
     dynamic_buffer: wgpu::Buffer,
@@ -112,9 +113,8 @@ struct DynamicProps {
 @group(0) @binding(1) var<storage, read> dynamicProps: array<DynamicProps>;
 
 struct Vertex {
-    position: vec2f,
+    @location(0) position: vec2f,
 }
-@group(0) @binding(2) var<storage, read> pos: array<Vertex>;
 
 struct VSOutput {
     @builtin(position) position: vec4f,
@@ -122,12 +122,12 @@ struct VSOutput {
 }
 
 @vertex fn vs(
-    @builtin(vertex_index) vertexIndex: u32,
+    vert: Vertex,
     @builtin(instance_index) instanceIndex: u32,
 ) -> VSOutput {
     var vsOut: VSOutput;
     vsOut.position = vec4f(
-        pos[vertexIndex].position * dynamicProps[instanceIndex].scale + staticProps[instanceIndex].offset, 0.0, 1.0,
+        vert.position * dynamicProps[instanceIndex].scale + staticProps[instanceIndex].offset, 0.0, 1.0,
     );
     vsOut.color = staticProps[instanceIndex].color;
     return vsOut;
@@ -147,7 +147,15 @@ struct VSOutput {
                 module: &shader_module,
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
-                buffers: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        shader_location: 0,
+                        offset: 0,
+                        format: wgpu::VertexFormat::Float32x2,
+                    }],
+                }],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader_module,
@@ -193,18 +201,14 @@ struct VSOutput {
             end_angle: std::f32::consts::TAU,
         }
         .create();
-        let vertex_storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("storage buffer vertices"),
             size: size_of_val(&vertex_data[..]) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        queue.write_buffer(
-            &vertex_storage_buffer,
-            0,
-            bytemuck::cast_slice(&vertex_data[..]),
-        );
+        queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data[..]));
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bind group"),
@@ -222,14 +226,6 @@ struct VSOutput {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &dynamic_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &vertex_storage_buffer,
                         offset: 0,
                         size: None,
                     }),
@@ -294,6 +290,7 @@ struct VSOutput {
 
         Self {
             render_pipeline,
+            vertex_buffer,
             objects,
             dynamic_storage_values,
             dynamic_buffer,
@@ -356,6 +353,7 @@ struct VSOutput {
         {
             let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
             pass.set_pipeline(&self.render_pipeline);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
             for (obj, dynamic_storage) in self
                 .objects
