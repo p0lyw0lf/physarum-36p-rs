@@ -9,22 +9,27 @@ const NUM_OBJECTS: usize = 100;
 // TODO: use wgsl_bindgen or wgsl_to_wgpu to automatically derive this
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-struct OurStruct {
+struct StaticProps {
     color: [f32; 4],
-    scale: [f32; 2],
     offset: [f32; 2],
+    _padding: [f32; 2],
+}
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct DynamicProps {
+    scale: [f32; 2],
 }
 
 struct ObjectInfo {
-    uniform_values: OurStruct,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
     default_scale: f32,
 }
 
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
     objects: [ObjectInfo; NUM_OBJECTS],
+    dynamic_storage_values: [DynamicProps; NUM_OBJECTS],
+    dynamic_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
 }
 
 impl Pipeline {
@@ -37,16 +42,25 @@ impl Pipeline {
             label: Some("hardcoded red triangle shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(
                 "
-struct OurStruct {
+struct StaticProps {
     color: vec4f,
-    scale: vec2f,
     offset: vec2f,
 }
-@group(0) @binding(0) var<uniform> ourStruct: OurStruct;
+@group(0) @binding(0) var<storage, read> baseProps: array<StaticProps>;
+struct DynamicProps {
+    scale: vec2f,
+}
+@group(0) @binding(1) var<storage, read> dynamicProps: array<DynamicProps>;
+
+struct VSOutput {
+    @builtin(position) position: vec4f,
+    @location(0) color: vec4f,
+}
 
 @vertex fn vs(
     @builtin(vertex_index) vertexIndex: u32,
-) -> @builtin(position) vec4f {
+    @builtin(instance_index) instanceIndex: u32,
+) -> VSOutput {
     let pos = array(
         vec2f( 0.0,  0.5),
         vec2f(-0.5, -0.5),
@@ -58,13 +72,16 @@ struct OurStruct {
         vec4f(0, 0, 1, 1), // blue
     );
 
-    return vec4f(
-        pos[vertexIndex] * ourStruct.scale + ourStruct.offset, 0.0, 1.0,
+    var vsOut: VSOutput;
+    vsOut.position = vec4f(
+        pos[vertexIndex] * dynamicProps[instanceIndex].scale + baseProps[instanceIndex].offset, 0.0, 1.0,
     );
+    vsOut.color = baseProps[instanceIndex].color;
+    return vsOut;
 }
 
-@fragment fn fs() -> @location(0) vec4f {
-    return ourStruct.color;
+@fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
+    return vsOut.color;
 }
 ",
             )),
@@ -95,56 +112,110 @@ struct OurStruct {
             multiview: Default::default(),
             cache: Default::default(),
         });
-
         let bind_group_layout = render_pipeline.get_bind_group_layout(0);
 
+        let mut static_storage_values =
+            [const { MaybeUninit::<StaticProps>::uninit() }; NUM_OBJECTS];
+        let mut dynamic_storage_values =
+            [const { MaybeUninit::<DynamicProps>::uninit() }; NUM_OBJECTS];
+
+        let static_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("static buffer"),
+            size: size_of_val(&static_storage_values).try_into().unwrap(),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let dynamic_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dynamic buffer"),
+            size: size_of_val(&dynamic_storage_values).try_into().unwrap(),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &static_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &dynamic_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        });
+
         let mut objects = [const { MaybeUninit::<ObjectInfo>::uninit() }; NUM_OBJECTS];
-        for (i, elem) in objects.iter_mut().enumerate() {
-            let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("uniform buffer for obj: {i}")),
-                size: size_of::<OurStruct>().try_into().unwrap(),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let uniform_values = OurStruct {
+        for ((obj, static_storage), dynamic_storage) in objects
+            .iter_mut()
+            .zip(static_storage_values.iter_mut())
+            .zip(dynamic_storage_values.iter_mut())
+        {
+            let default_scale = rand::random_range(0.2..=0.5);
+            obj.write(ObjectInfo { default_scale });
+
+            let static_props = StaticProps {
                 color: [
                     rand::random_range(0.0..=1.0),
                     rand::random_range(0.0..=1.0),
                     rand::random_range(0.0..=1.0),
                     1.,
                 ],
-                scale: [0.5, 0.5],
                 offset: [
                     rand::random_range(-0.9..=0.9),
                     rand::random_range(-0.9..=0.9),
                 ],
+                _padding: Default::default(),
             };
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("bind group for obj: {i}")),
-                layout: &bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                }],
-            });
-            let default_scale = rand::random_range(0.2..=0.5);
+            static_storage.write(static_props);
 
-            elem.write(ObjectInfo {
-                uniform_values,
-                uniform_buffer,
-                bind_group,
-                default_scale,
-            });
+            let dynamic_props = DynamicProps {
+                scale: [default_scale, default_scale],
+            };
+            dynamic_storage.write(dynamic_props);
         }
+
+        // SAFETY: all elements have been initialized now.
+        let (objects, static_storage_values, dynamic_storage_values) = unsafe {
+            (
+                std::mem::transmute::<
+                    [MaybeUninit<ObjectInfo>; NUM_OBJECTS],
+                    [ObjectInfo; NUM_OBJECTS],
+                >(objects),
+                std::mem::transmute::<
+                    [MaybeUninit<StaticProps>; NUM_OBJECTS],
+                    [StaticProps; NUM_OBJECTS],
+                >(static_storage_values),
+                std::mem::transmute::<
+                    [MaybeUninit<DynamicProps>; NUM_OBJECTS],
+                    [DynamicProps; NUM_OBJECTS],
+                >(dynamic_storage_values),
+            )
+        };
+
+        // These are only written to once, so might as well do it now
+        queue.write_buffer(
+            &static_buffer,
+            0,
+            bytemuck::bytes_of(&static_storage_values),
+        );
 
         Self {
             render_pipeline,
-            // SAFETY: all elements are initialized in the above loop
-            objects: unsafe { std::mem::transmute(objects) },
+            objects,
+            dynamic_storage_values,
+            dynamic_buffer,
+            bind_group,
         }
     }
 
@@ -153,7 +224,7 @@ struct OurStruct {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         surface_texture: &wgpu::SurfaceTexture,
-        surface_format: wgpu::TextureFormat,
+        _surface_format: wgpu::TextureFormat,
     ) {
         let width = surface_texture.texture.width() as f32;
         let height = surface_texture.texture.height() as f32;
@@ -202,16 +273,23 @@ struct OurStruct {
         {
             let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
             pass.set_pipeline(&self.render_pipeline);
-            for obj in self.objects.iter_mut() {
-                obj.uniform_values.scale = [obj.default_scale / aspect, obj.default_scale];
-                queue.write_buffer(
-                    &obj.uniform_buffer,
-                    0,
-                    bytemuck::bytes_of(&obj.uniform_values),
-                );
-                pass.set_bind_group(0, &obj.bind_group, &[]);
-                pass.draw(0..3, 0..1);
+
+            for (obj, dynamic_storage) in self
+                .objects
+                .iter()
+                .zip(self.dynamic_storage_values.iter_mut())
+            {
+                dynamic_storage.scale = [obj.default_scale / aspect, obj.default_scale];
             }
+
+            queue.write_buffer(
+                &self.dynamic_buffer,
+                0,
+                bytemuck::bytes_of(&self.dynamic_storage_values),
+            );
+
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.draw(0..3, 0..(NUM_OBJECTS as u32));
         }
 
         let command_buffer = encoder.finish();
