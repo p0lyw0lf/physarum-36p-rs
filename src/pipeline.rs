@@ -12,7 +12,6 @@ const NUM_OBJECTS: usize = 100;
 struct StaticProps {
     color: [f32; 4],
     offset: [f32; 2],
-    _padding: [f32; 2],
 }
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -84,10 +83,10 @@ struct ObjectInfo {
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
+    static_buffer: wgpu::Buffer,
     objects: [ObjectInfo; NUM_OBJECTS],
     dynamic_storage_values: [DynamicProps; NUM_OBJECTS],
     dynamic_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
     num_vertices: usize,
 }
 
@@ -101,19 +100,14 @@ impl Pipeline {
             label: Some("hardcoded red triangle shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(
                 "
-struct StaticProps {
-    color: vec4f,
-    offset: vec2f,
-}
-@group(0) @binding(0) var<storage, read> staticProps: array<StaticProps>;
-
-struct DynamicProps {
-    scale: vec2f,
-}
-@group(0) @binding(1) var<storage, read> dynamicProps: array<DynamicProps>;
-
 struct Vertex {
+    // Per-vertex
     @location(0) position: vec2f,
+    // Static
+    @location(1) color: vec4f,
+    @location(2) offset: vec2f,
+    // Dynamic
+    @location(3) scale: vec2f,
 }
 
 struct VSOutput {
@@ -123,13 +117,12 @@ struct VSOutput {
 
 @vertex fn vs(
     vert: Vertex,
-    @builtin(instance_index) instanceIndex: u32,
 ) -> VSOutput {
     var vsOut: VSOutput;
     vsOut.position = vec4f(
-        vert.position * dynamicProps[instanceIndex].scale + staticProps[instanceIndex].offset, 0.0, 1.0,
+        vert.position * vert.scale + vert.offset, 0.0, 1.0,
     );
-    vsOut.color = staticProps[instanceIndex].color;
+    vsOut.color = vert.color;
     return vsOut;
 }
 
@@ -147,15 +140,42 @@ struct VSOutput {
                 module: &shader_module,
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        shader_location: 0,
-                        offset: 0,
-                        format: wgpu::VertexFormat::Float32x2,
-                    }],
-                }],
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[wgpu::VertexAttribute {
+                            shader_location: 0,
+                            offset: std::mem::offset_of!(Vertex, position) as u64,
+                            format: wgpu::VertexFormat::Float32x2,
+                        }],
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: size_of::<StaticProps>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                shader_location: 1,
+                                offset: std::mem::offset_of!(StaticProps, color) as u64,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            wgpu::VertexAttribute {
+                                shader_location: 2,
+                                offset: std::mem::offset_of!(StaticProps, offset) as u64,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                        ],
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: size_of::<DynamicProps>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[wgpu::VertexAttribute {
+                            shader_location: 3,
+                            offset: std::mem::offset_of!(DynamicProps, scale) as u64,
+                            format: wgpu::VertexFormat::Float32x2,
+                        }],
+                    },
+                ],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader_module,
@@ -173,7 +193,6 @@ struct VSOutput {
             multiview: Default::default(),
             cache: Default::default(),
         });
-        let bind_group_layout = render_pipeline.get_bind_group_layout(0);
 
         let mut static_storage_values =
             [const { MaybeUninit::<StaticProps>::uninit() }; NUM_OBJECTS];
@@ -183,13 +202,13 @@ struct VSOutput {
         let static_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("static buffer"),
             size: size_of_val(&static_storage_values).try_into().unwrap(),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let dynamic_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dynamic buffer"),
             size: size_of_val(&dynamic_storage_values).try_into().unwrap(),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -209,29 +228,6 @@ struct VSOutput {
         });
 
         queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data[..]));
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bind group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &static_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &dynamic_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-            ],
-        });
 
         let mut objects = [const { MaybeUninit::<ObjectInfo>::uninit() }; NUM_OBJECTS];
         for ((obj, static_storage), dynamic_storage) in objects
@@ -253,7 +249,6 @@ struct VSOutput {
                     rand::random_range(-0.9..=0.9),
                     rand::random_range(-0.9..=0.9),
                 ],
-                _padding: Default::default(),
             };
             static_storage.write(static_props);
 
@@ -291,10 +286,10 @@ struct VSOutput {
         Self {
             render_pipeline,
             vertex_buffer,
+            static_buffer,
             objects,
             dynamic_storage_values,
             dynamic_buffer,
-            bind_group,
             num_vertices: vertex_data.len(),
         }
     }
@@ -354,6 +349,8 @@ struct VSOutput {
             let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
             pass.set_pipeline(&self.render_pipeline);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_vertex_buffer(1, self.static_buffer.slice(..));
+            pass.set_vertex_buffer(2, self.dynamic_buffer.slice(..));
 
             for (obj, dynamic_storage) in self
                 .objects
@@ -369,7 +366,6 @@ struct VSOutput {
                 bytemuck::bytes_of(&self.dynamic_storage_values),
             );
 
-            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..(self.num_vertices as u32), 0..(NUM_OBJECTS as u32));
         }
 
