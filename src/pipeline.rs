@@ -19,7 +19,7 @@ struct DynamicProps {
     scale: [f32; 2],
 }
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug)]
 struct Vertex {
     position: [f32; 2],
     color: [u8; 4],
@@ -34,8 +34,9 @@ struct CircleVertexProps {
 }
 
 impl CircleVertexProps {
-    fn create(self) -> Vec<Vertex> {
-        let num_vertices = self.num_subdivisions * 3 * 2;
+    fn create(self) -> (Vec<Vertex>, Vec<u32>) {
+        // 2 vertices per subdivision, + 1 to wrap around the circle
+        let num_vertices = (self.num_subdivisions + 1) * 2;
         let mut vertex_data = vec![Vertex::zeroed(); num_vertices];
 
         let mut offset = 0;
@@ -53,34 +54,46 @@ impl CircleVertexProps {
 
         // 2 triangles per subdivision
         //
-        // 0--1 4
-        // | / /|
-        // |/ / |
-        // 2 3--5
-        for i in 0..self.num_subdivisions {
+        // 0  2  4  6  8 ...
+        //
+        // 1  3  5  7  9 ...
+        for i in 0..=self.num_subdivisions {
             let angle1 = self.start_angle
                 + i as f32 * (self.end_angle - self.start_angle) / self.num_subdivisions as f32;
-            let angle2 = self.start_angle
-                + (i + 1) as f32 * (self.end_angle - self.start_angle)
-                    / self.num_subdivisions as f32;
 
             let c1 = f32::cos(angle1);
             let s1 = f32::sin(angle1);
-            let c2 = f32::cos(angle2);
-            let s2 = f32::sin(angle2);
 
-            // first triangle
             add_vertex(c1 * self.radius, s1 * self.radius, false);
-            add_vertex(c2 * self.radius, s2 * self.radius, false);
             add_vertex(c1 * self.inner_radius, s1 * self.inner_radius, true);
-
-            // second triangle
-            add_vertex(c1 * self.inner_radius, s1 * self.inner_radius, true);
-            add_vertex(c2 * self.radius, s2 * self.radius, false);
-            add_vertex(c2 * self.inner_radius, s2 * self.inner_radius, true);
         }
 
-        vertex_data
+        // 3 indices per triangle, 2 triangles per subdivision
+        let mut index_data = vec![0u32; self.num_subdivisions * 3 * 2];
+
+        // 1st tri  2nd tri  3rd tri  4th tri
+        // 0 1 2    2 1 3    2 3 4    4 3 5   ...
+        //
+        // 0--2        2     2--4        4
+        // | /        /|     | /        /|
+        // |/        / |     |/        / |
+        // 1        1--3     3        3--5
+        for i in 0..self.num_subdivisions {
+            let ndx = i * 6;
+            let offset = (i * 2) as u32;
+
+            // first triangle
+            index_data[ndx] = offset;
+            index_data[ndx + 1] = offset + 1;
+            index_data[ndx + 2] = offset + 2;
+
+            // Second triangle
+            index_data[ndx + 3] = offset + 2;
+            index_data[ndx + 4] = offset + 1;
+            index_data[ndx + 5] = offset + 3;
+        }
+
+        (vertex_data, index_data)
     }
 }
 
@@ -91,6 +104,7 @@ struct ObjectInfo {
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
     static_buffer: wgpu::Buffer,
     objects: [ObjectInfo; NUM_OBJECTS],
     dynamic_storage_values: [DynamicProps; NUM_OBJECTS],
@@ -228,7 +242,7 @@ struct VSOutput {
             mapped_at_creation: false,
         });
 
-        let vertex_data = CircleVertexProps {
+        let (vertex_data, index_data) = CircleVertexProps {
             radius: 0.5,
             inner_radius: 0.25,
             num_subdivisions: 24,
@@ -236,14 +250,22 @@ struct VSOutput {
             end_angle: std::f32::consts::TAU,
         }
         .create();
+
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("storage buffer vertices"),
+            label: Some("our vertex buffer"),
             size: size_of_val(&vertex_data[..]) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
         queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data[..]));
+
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("our index buffer"),
+            size: size_of_val(&index_data[..]) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&index_data[..]));
 
         let mut objects = [const { MaybeUninit::<ObjectInfo>::uninit() }; NUM_OBJECTS];
         for ((obj, static_storage), dynamic_storage) in objects
@@ -302,11 +324,12 @@ struct VSOutput {
         Self {
             render_pipeline,
             vertex_buffer,
+            index_buffer,
             static_buffer,
             objects,
             dynamic_storage_values,
             dynamic_buffer,
-            num_vertices: vertex_data.len(),
+            num_vertices: index_data.len(),
         }
     }
 
@@ -367,6 +390,7 @@ struct VSOutput {
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_vertex_buffer(1, self.static_buffer.slice(..));
             pass.set_vertex_buffer(2, self.dynamic_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
             for (obj, dynamic_storage) in self
                 .objects
@@ -382,7 +406,7 @@ struct VSOutput {
                 bytemuck::bytes_of(&self.dynamic_storage_values),
             );
 
-            pass.draw(0..(self.num_vertices as u32), 0..(NUM_OBJECTS as u32));
+            pass.draw_indexed(0..(self.num_vertices as u32), 0, 0..(NUM_OBJECTS as u32));
         }
 
         let command_buffer = encoder.finish();
