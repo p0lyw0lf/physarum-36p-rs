@@ -10,7 +10,7 @@ const NUM_OBJECTS: usize = 100;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct StaticProps {
-    color: [f32; 4],
+    color: [u8; 4],
     offset: [f32; 2],
 }
 #[repr(C)]
@@ -22,6 +22,7 @@ struct DynamicProps {
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Vertex {
     position: [f32; 2],
+    color: [u8; 4],
 }
 
 struct CircleVertexProps {
@@ -38,8 +39,15 @@ impl CircleVertexProps {
         let mut vertex_data = vec![Vertex::zeroed(); num_vertices];
 
         let mut offset = 0;
-        let mut add_vertex = |x: f32, y: f32| {
-            vertex_data[offset] = Vertex { position: [x, y] };
+        let mut add_vertex = |x: f32, y: f32, inner: bool| {
+            vertex_data[offset] = Vertex {
+                position: [x, y],
+                color: if inner {
+                    [255, 255, 255, 255]
+                } else {
+                    [100, 100, 100, 255]
+                },
+            };
             offset += 1;
         };
 
@@ -62,14 +70,14 @@ impl CircleVertexProps {
             let s2 = f32::sin(angle2);
 
             // first triangle
-            add_vertex(c1 * self.radius, s1 * self.radius);
-            add_vertex(c2 * self.radius, s2 * self.radius);
-            add_vertex(c1 * self.inner_radius, s1 * self.inner_radius);
+            add_vertex(c1 * self.radius, s1 * self.radius, false);
+            add_vertex(c2 * self.radius, s2 * self.radius, false);
+            add_vertex(c1 * self.inner_radius, s1 * self.inner_radius, true);
 
             // second triangle
-            add_vertex(c1 * self.inner_radius, s1 * self.inner_radius);
-            add_vertex(c2 * self.radius, s2 * self.radius);
-            add_vertex(c2 * self.inner_radius, s2 * self.inner_radius);
+            add_vertex(c1 * self.inner_radius, s1 * self.inner_radius, true);
+            add_vertex(c2 * self.radius, s2 * self.radius, false);
+            add_vertex(c2 * self.inner_radius, s2 * self.inner_radius, true);
         }
 
         vertex_data
@@ -103,6 +111,7 @@ impl Pipeline {
 struct Vertex {
     // Per-vertex
     @location(0) position: vec2f,
+    @location(4) perVertexColor: vec4f,
     // Static
     @location(1) color: vec4f,
     @location(2) offset: vec2f,
@@ -122,7 +131,7 @@ struct VSOutput {
     vsOut.position = vec4f(
         vert.position * vert.scale + vert.offset, 0.0, 1.0,
     );
-    vsOut.color = vert.color;
+    vsOut.color = vert.color * vert.perVertexColor;
     return vsOut;
 }
 
@@ -144,11 +153,18 @@ struct VSOutput {
                     wgpu::VertexBufferLayout {
                         array_stride: size_of::<Vertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[wgpu::VertexAttribute {
-                            shader_location: 0,
-                            offset: std::mem::offset_of!(Vertex, position) as u64,
-                            format: wgpu::VertexFormat::Float32x2,
-                        }],
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                shader_location: 0,
+                                offset: std::mem::offset_of!(Vertex, position) as u64,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                shader_location: 4,
+                                offset: std::mem::offset_of!(Vertex, color) as u64,
+                                format: wgpu::VertexFormat::Unorm8x4,
+                            },
+                        ],
                     },
                     wgpu::VertexBufferLayout {
                         array_stride: size_of::<StaticProps>() as u64,
@@ -157,7 +173,7 @@ struct VSOutput {
                             wgpu::VertexAttribute {
                                 shader_location: 1,
                                 offset: std::mem::offset_of!(StaticProps, color) as u64,
-                                format: wgpu::VertexFormat::Float32x4,
+                                format: wgpu::VertexFormat::Unorm8x4,
                             },
                             wgpu::VertexAttribute {
                                 shader_location: 2,
@@ -240,10 +256,10 @@ struct VSOutput {
 
             let static_props = StaticProps {
                 color: [
-                    rand::random_range(0.0..=1.0),
-                    rand::random_range(0.0..=1.0),
-                    rand::random_range(0.0..=1.0),
-                    1.,
+                    rand::random_range(u8::MIN..=u8::MAX),
+                    rand::random_range(u8::MIN..=u8::MAX),
+                    rand::random_range(u8::MIN..=u8::MAX),
+                    u8::MAX,
                 ],
                 offset: [
                     rand::random_range(-0.9..=0.9),
