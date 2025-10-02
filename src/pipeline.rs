@@ -1,9 +1,27 @@
-use std::{borrow::Cow, mem::MaybeUninit};
+use crate::constants::*;
 
 pub struct Pipeline {
-    render_pipeline: wgpu::RenderPipeline,
-    bind_groups: [wgpu::BindGroup; 8],
-    pub bind_group_index: usize,
+    constants_buffer: wgpu::Buffer,
+    point_settings_buffer: wgpu::Buffer,
+    trail_read_texture: wgpu::Texture,
+    trail_write_texture: wgpu::Texture,
+    particle_params_buffer: wgpu::Buffer,
+    particle_counts_buffer: wgpu::Buffer,
+    fbo_texture: wgpu::Texture,
+
+    constants_bind_group: wgpu::BindGroup,
+    trail_read_bind_group: wgpu::BindGroup,
+    trail_write_bind_group: wgpu::BindGroup,
+    state_bind_group: wgpu::BindGroup,
+
+    setter_pipeline: wgpu::ComputePipeline,
+    move_pipeline: wgpu::ComputePipeline,
+    deposit_pipeline: wgpu::ComputePipeline,
+    diffusion_pipeline: wgpu::ComputePipeline,
+
+    fbo_sampler: wgpu::Sampler,
+    fbo_bind_group: wgpu::BindGroup,
+    fbo_pipeline: wgpu::RenderPipeline,
 }
 
 impl Pipeline {
@@ -12,64 +30,294 @@ impl Pipeline {
         queue: &wgpu::Queue,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("our hardcoded shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(
-                "
-struct VSOutput {
-    @builtin(position) position: vec4f,
-    @location(0) texcoord: vec2f,
-}
+        let buffer = |name: &str, size: u64, usage: wgpu::BufferUsages| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("{name}_buffer")),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
 
-@vertex fn vs(
-    @builtin(vertex_index) vertexIndex: u32,
-) -> VSOutput {
-    let pos = array(
-        // 1st triangle
-        vec2f(0.0, 0.0), // center
-        vec2f(1.0, 0.0), // right, center
-        vec2f(0.0, 1.0), // center, top
+        let constants_buffer = buffer(
+            "constants",
+            size_of::<Constants>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        queue.write_buffer(&constants_buffer, 0, bytemuck::bytes_of(&CONSTANTS));
 
-        // 2nd triangle
-        vec2f(0.0, 1.0), // center, top
-        vec2f(1.0, 0.0), // right, center
-        vec2f(1.0, 1.0), // right, top
-    );
+        let point_settings_buffer = buffer(
+            "point_settings",
+            size_of::<PointSettings>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        // New point settings are written every frame
 
-    var vsOut: VSOutput;
-    let xy = pos[vertexIndex];
-    vsOut.position = vec4f(xy, 0.0, 1.0);
-    vsOut.texcoord = xy;
-    return vsOut;
-}
+        // Randomly initialize the particles' starting positions and headings
+        let mut particles = vec![0u16; SIMULATION_NUM_PARTICLES * 4];
+        fn float_as_u16(f: f32) -> u16 {
+            (f.clamp(0., 1.) * 65535.).round() as u16
+        }
+        for (i, p) in particles.iter_mut().enumerate() {
+            if i % 4 == 0 {
+                *p = float_as_u16(rand::random_range(0..SIMULATION_WIDTH) as f32);
+            } else if i % 4 == 1 {
+                *p = float_as_u16(rand::random_range(0..SIMULATION_HEIGHT) as f32);
+            } else {
+                *p = float_as_u16(rand::random_range(0..u16::MAX) as f32 / u16::MAX as f32);
+            }
+        }
+        let particle_params_buffer = buffer(
+            "particle_params",
+            particles.len() as u64 * 2,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        queue.write_buffer(
+            &particle_params_buffer,
+            0,
+            bytemuck::cast_slice(particles.as_slice()),
+        );
 
-@group(0) @binding(0) var ourSampler: sampler;
-@group(0) @binding(1) var ourTexture: texture_2d<f32>;
+        let particle_counts_buffer = buffer(
+            "particle_counts",
+            (SIMULATION_WIDTH * SIMULATION_HEIGHT * 4) as u64,
+            wgpu::BufferUsages::STORAGE,
+        );
+        // The counter is re-initialized every frame
 
-@fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-    return textureSample(ourTexture, ourSampler, vsOut.texcoord);
-}
-",
-            )),
+        let texture = |label: &str,
+                       format: wgpu::TextureFormat,
+                       view_formats: &[wgpu::TextureFormat]| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(&format!("{label}_texture")),
+                size: wgpu::Extent3d {
+                    width: SIMULATION_WIDTH,
+                    height: SIMULATION_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+                format,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+                view_formats,
+            })
+        };
+
+        let trail_read_texture = texture("trail_read", wgpu::TextureFormat::R32Float, &[]);
+        let trail_write_texture = texture("trail_write", wgpu::TextureFormat::R32Float, &[]);
+        let fbo_texture = texture("fbo", wgpu::TextureFormat::Rgba8Unorm, &[]);
+
+        // Specifying a bind group layout lets us re-use the same bind group between shaders.
+        let buffer_entry = |i: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
+            binding: i,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let storage_texture_entry =
+            |i: u32, access: wgpu::StorageTextureAccess, format: wgpu::TextureFormat| {
+                wgpu::BindGroupLayoutEntry {
+                    binding: i,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access,
+                        format,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                }
+            };
+        let constants_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("constants_bind_group_layout"),
+                entries: &[
+                    // constants
+                    buffer_entry(0, wgpu::BufferBindingType::Uniform),
+                    // point_settings
+                    buffer_entry(1, wgpu::BufferBindingType::Uniform),
+                ],
+            });
+        let trail_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("trail_bind_group_layout"),
+                entries: &[
+                    // trail_read
+                    storage_texture_entry(
+                        0,
+                        wgpu::StorageTextureAccess::ReadOnly,
+                        wgpu::TextureFormat::R32Float,
+                    ),
+                    // trail_write
+                    storage_texture_entry(
+                        1,
+                        wgpu::StorageTextureAccess::WriteOnly,
+                        wgpu::TextureFormat::R32Float,
+                    ),
+                ],
+            });
+        let state_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("storage_bind_group_layout"),
+                entries: &[
+                    // particle_params
+                    buffer_entry(0, wgpu::BufferBindingType::Storage { read_only: false }),
+                    // particle_counts
+                    buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
+                    // fbo_display
+                    storage_texture_entry(
+                        2,
+                        wgpu::StorageTextureAccess::WriteOnly,
+                        wgpu::TextureFormat::Rgba8Unorm,
+                    ),
+                ],
+            });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pipeline_layout"),
+            bind_group_layouts: &[
+                &constants_bind_group_layout,
+                &trail_bind_group_layout,
+                &state_bind_group_layout,
+            ],
+            push_constant_ranges: &[],
         });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("our hardcoded rainbow triangle pipeline"),
+        fn buffer_resource<'a>(i: u32, buffer: &'a wgpu::Buffer) -> wgpu::BindGroupEntry<'a> {
+            wgpu::BindGroupEntry {
+                binding: i,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }
+        }
+
+        let constants_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("constants_bind_group"),
+            layout: &constants_bind_group_layout,
+            entries: &[
+                buffer_resource(0, &constants_buffer),
+                buffer_resource(1, &point_settings_buffer),
+            ],
+        });
+        fn texture_view(
+            label: &str,
+            texture: &wgpu::Texture,
+            format: Option<wgpu::TextureFormat>,
+        ) -> wgpu::TextureView {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some(&format!("{label}_texture_view")),
+                format,
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                usage: Some(
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+                ),
+                aspect: wgpu::TextureAspect::All,
+                base_mip_level: 0,
+                mip_level_count: None,
+                base_array_layer: 0,
+                array_layer_count: None,
+            })
+        }
+        fn texture_resource<'a>(
+            i: u32,
+            texture_view: &'a wgpu::TextureView,
+        ) -> wgpu::BindGroupEntry<'a> {
+            wgpu::BindGroupEntry {
+                binding: i,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            }
+        }
+        let trail_read_texture_view = texture_view("trail_read", &trail_read_texture, None);
+        let trail_write_texture_view = texture_view("trail_write", &trail_write_texture, None);
+        let trail_read_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("trail_read_bind_group"),
+            layout: &trail_bind_group_layout,
+            entries: &[
+                texture_resource(0, &trail_read_texture_view),
+                texture_resource(1, &trail_write_texture_view),
+            ],
+        });
+        let trail_write_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("trail_write_bind_group"),
+            layout: &trail_bind_group_layout,
+            entries: &[
+                texture_resource(0, &trail_write_texture_view),
+                texture_resource(1, &trail_read_texture_view),
+            ],
+        });
+
+        let fbo_texture_view = texture_view("fbo", &fbo_texture, None);
+
+        let state_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("state_bind_group"),
+            layout: &state_bind_group_layout,
+            entries: &[
+                buffer_resource(0, &particle_params_buffer),
+                buffer_resource(1, &particle_counts_buffer),
+                texture_resource(2, &fbo_texture_view),
+            ],
+        });
+
+        let compute_shader_module =
+            device.create_shader_module(wgpu::include_wgsl!("./shaders/computeshader.wgsl"));
+
+        let compute_pipeline = |entrypoint: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(&format!("{entrypoint}_pipeline")),
+                layout: Some(&pipeline_layout),
+                module: &compute_shader_module,
+                entry_point: Some(entrypoint),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+
+        let setter_pipeline = compute_pipeline("cs_setter");
+        let move_pipeline = compute_pipeline("cs_move");
+        let deposit_pipeline = compute_pipeline("cs_deposit");
+        let diffusion_pipeline = compute_pipeline("cs_diffusion");
+
+        let fbo_shader_module =
+            device.create_shader_module(wgpu::include_wgsl!("./shaders/textureshader.wgsl"));
+
+        let fbo_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fbo_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: 0.,
+            lod_max_clamp: 32.,
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None,
+        });
+
+        let fbo_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("fbo_pipeline"),
             layout: None,
             vertex: wgpu::VertexState {
-                module: &shader_module,
+                module: &fbo_shader_module,
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
+                module: &fbo_shader_module,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
-                    blend: Default::default(),
-                    write_mask: Default::default(),
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             primitive: Default::default(),
@@ -79,136 +327,112 @@ struct VSOutput {
             cache: Default::default(),
         });
 
-        const TEXTURE_WIDTH: usize = 5;
-        const TEXTURE_HEIGHT: usize = 7;
+        let fbo_texture_view = texture_view("fbo", &fbo_texture, None);
 
-        const R: [u8; 4] = [255, 0, 0, 255]; // red
-        const Y: [u8; 4] = [255, 255, 0, 255]; // yellow
-        const B: [u8; 4] = [0, 0, 255, 255];
-
-        // NOTE: gpus expect "increasing Y goes up", so we need to flip the texture vertically,
-        // compared to how we'd normally lay it out in memory (where "increasing Y goes down").
-        let texture_data = [
-            R, R, R, R, R, // 6
-            R, Y, R, R, R, // 5
-            R, Y, R, R, R, // 4
-            R, Y, Y, R, R, // 3
-            R, Y, R, R, R, // 2
-            R, Y, Y, Y, R, // 1
-            B, R, R, R, R, // 0
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-        debug_assert_eq!(texture_data.len(), TEXTURE_WIDTH * TEXTURE_HEIGHT * 4);
-
-        let texture_size = wgpu::Extent3d {
-            width: TEXTURE_WIDTH as u32,
-            height: TEXTURE_HEIGHT as u32,
-            depth_or_array_layers: 1,
-        };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("our texture"),
-            size: texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: Default::default(),
+        let fbo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fbo_bind_group"),
+            layout: &fbo_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&fbo_sampler),
+                },
+                texture_resource(1, &fbo_texture_view),
+            ],
         });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: Default::default(),
-                aspect: Default::default(),
-            },
-            &texture_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some((TEXTURE_WIDTH * 4) as u32),
-                rows_per_image: Some(TEXTURE_HEIGHT as u32),
-            },
-            texture_size,
-        );
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("our texture view"),
-            ..Default::default()
-        });
-
-        let bind_group_layout = render_pipeline.get_bind_group_layout(0);
-        let mut bind_groups = [const { MaybeUninit::<wgpu::BindGroup>::uninit() }; 8];
-        for (i, bind_group) in bind_groups.iter_mut().enumerate() {
-            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some(&format!("bind group #{i}")),
-                // TODO: use bitflags if this were something real
-                address_mode_u: if i & 1 == 0 {
-                    wgpu::AddressMode::ClampToEdge
-                } else {
-                    wgpu::AddressMode::Repeat
-                },
-                address_mode_v: if i & 2 == 0 {
-                    wgpu::AddressMode::ClampToEdge
-                } else {
-                    wgpu::AddressMode::Repeat
-                },
-                mag_filter: if i & 4 == 0 {
-                    wgpu::FilterMode::Nearest
-                } else {
-                    wgpu::FilterMode::Linear
-                },
-                ..Default::default()
-            });
-            bind_group.write(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("our bind group"),
-                layout: &bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&texture_view),
-                    },
-                ],
-            }));
-        }
-
-        // SAFETY: all bind groups have been initialized
-        let bind_groups = unsafe {
-            std::mem::transmute::<[MaybeUninit<wgpu::BindGroup>; 8], [wgpu::BindGroup; 8]>(
-                bind_groups,
-            )
-        };
 
         Self {
-            render_pipeline,
-            bind_groups,
-            bind_group_index: 0,
+            constants_buffer,
+            point_settings_buffer,
+            trail_read_texture,
+            trail_write_texture,
+            particle_params_buffer,
+            particle_counts_buffer,
+            fbo_texture,
+
+            constants_bind_group,
+            trail_read_bind_group,
+            trail_write_bind_group,
+            state_bind_group,
+
+            setter_pipeline,
+            move_pipeline,
+            deposit_pipeline,
+            diffusion_pipeline,
+
+            fbo_sampler,
+            fbo_bind_group,
+            fbo_pipeline,
         }
     }
 
     pub fn render(
-        &mut self,
+        &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         surface_texture: &wgpu::SurfaceTexture,
-        _surface_format: wgpu::TextureFormat,
+        surface_format: wgpu::TextureFormat,
     ) {
-        let width = surface_texture.texture.width() as f32;
-        let height = surface_texture.texture.height() as f32;
-        let aspect = width / height;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("encoder"),
+        });
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("compute_pass"),
+                timestamp_writes: None,
+            });
+
+            compute_pass.set_pipeline(&self.setter_pipeline);
+            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
+            compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
+            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            compute_pass.dispatch_workgroups(
+                SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
+                SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
+                1,
+            );
+
+            compute_pass.set_pipeline(&self.move_pipeline);
+            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
+            compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
+            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            compute_pass.dispatch_workgroups(
+                (SIMULATION_NUM_PARTICLES
+                    / (SIMULATION_WORK_GROUP_SIZE * SIMULATION_WORK_GROUP_SIZE) as usize)
+                    as u32,
+                1,
+                1,
+            );
+
+            compute_pass.set_pipeline(&self.deposit_pipeline);
+            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
+            compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
+            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            compute_pass.dispatch_workgroups(
+                SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
+                SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
+                1,
+            );
+
+            compute_pass.set_pipeline(&self.diffusion_pipeline);
+            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
+            compute_pass.set_bind_group(1, &self.trail_write_bind_group, &[]);
+            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            compute_pass.dispatch_workgroups(
+                SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
+                SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
+                1,
+            );
+        }
 
         let surface_texture_view =
             surface_texture
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("surface texture view"),
-                    format: Default::default(),
+                    label: Some("fbo_texture_view"),
+                    format: Some(surface_format.add_srgb_suffix()),
                     dimension: Some(wgpu::TextureViewDimension::D2),
-                    usage: Default::default(),
+                    usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
                     aspect: wgpu::TextureAspect::All,
                     base_mip_level: 0,
                     mip_level_count: None,
@@ -216,44 +440,29 @@ struct VSOutput {
                     array_layer_count: None,
                 });
 
-        let render_pass_descriptor = wgpu::RenderPassDescriptor {
-            label: Some("out basic surface renderPass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &surface_texture_view,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.3,
-                        g: 0.3,
-                        b: 0.3,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-                resolve_target: Default::default(),
-                depth_slice: Default::default(),
-            })],
-            depth_stencil_attachment: Default::default(),
-            timestamp_writes: Default::default(),
-            occlusion_query_set: Default::default(),
-        };
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("our encoder"),
-        });
-
         {
-            let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
-            pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(
-                0,
-                &self.bind_groups[self.bind_group_index % self.bind_groups.len()],
-                &[],
-            );
+            // Create the renderpass which will clear the screen.
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface_texture_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
 
-            pass.draw(0..6, 0..1);
+            render_pass.set_pipeline(&self.fbo_pipeline);
+            render_pass.set_bind_group(0, &self.fbo_bind_group, &[]);
+            render_pass.draw_indexed(0..6, 0, 0..1);
         }
 
-        let command_buffer = encoder.finish();
-        queue.submit([command_buffer]);
+        queue.submit([encoder.finish()]);
     }
 }
