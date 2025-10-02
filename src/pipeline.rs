@@ -1,7 +1,9 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, mem::MaybeUninit};
+
 pub struct Pipeline {
     render_pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
+    bind_groups: [wgpu::BindGroup; 8],
+    pub bind_group_index: usize,
 }
 
 impl Pipeline {
@@ -135,30 +137,56 @@ struct VSOutput {
             ..Default::default()
         });
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("our sampler"),
-            ..Default::default()
-        });
-
         let bind_group_layout = render_pipeline.get_bind_group_layout(0);
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("our bind group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+        let mut bind_groups = [const { MaybeUninit::<wgpu::BindGroup>::uninit() }; 8];
+        for (i, bind_group) in bind_groups.iter_mut().enumerate() {
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some(&format!("bind group #{i}")),
+                // TODO: use bitflags if this were something real
+                address_mode_u: if i & 1 == 0 {
+                    wgpu::AddressMode::ClampToEdge
+                } else {
+                    wgpu::AddressMode::Repeat
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                address_mode_v: if i & 2 == 0 {
+                    wgpu::AddressMode::ClampToEdge
+                } else {
+                    wgpu::AddressMode::Repeat
                 },
-            ],
-        });
+                mag_filter: if i & 4 == 0 {
+                    wgpu::FilterMode::Nearest
+                } else {
+                    wgpu::FilterMode::Linear
+                },
+                ..Default::default()
+            });
+            bind_group.write(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("our bind group"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                ],
+            }));
+        }
+
+        // SAFETY: all bind groups have been initialized
+        let bind_groups = unsafe {
+            std::mem::transmute::<[MaybeUninit<wgpu::BindGroup>; 8], [wgpu::BindGroup; 8]>(
+                bind_groups,
+            )
+        };
 
         Self {
             render_pipeline,
-            bind_group,
+            bind_groups,
+            bind_group_index: 0,
         }
     }
 
@@ -216,7 +244,11 @@ struct VSOutput {
         {
             let mut pass = encoder.begin_render_pass(&render_pass_descriptor);
             pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_bind_group(
+                0,
+                &self.bind_groups[self.bind_group_index % self.bind_groups.len()],
+                &[],
+            );
 
             pass.draw(0..6, 0..1);
         }

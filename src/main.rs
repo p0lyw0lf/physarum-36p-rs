@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::Key,
     window::{Window, WindowId},
 };
 
@@ -142,6 +143,21 @@ impl ApplicationHandler for App {
                 // here as this event is always followed up by redraw request.
                 state.resize(size);
             }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(c),
+                        state: ElementState::Released,
+                        repeat: false,
+                        ..
+                    },
+                ..
+            } => match c.as_str() {
+                "1" => state.pipeline.bind_group_index ^= 1,
+                "2" => state.pipeline.bind_group_index ^= 2,
+                "3" => state.pipeline.bind_group_index ^= 4,
+                _ => (),
+            },
             _ => (),
         }
     }
