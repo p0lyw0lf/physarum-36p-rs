@@ -3,6 +3,9 @@ use crate::shaders::compute_shader;
 use crate::shaders::render_shader;
 
 pub struct Pipeline {
+    point_settings_buffer: wgpu::Buffer,
+    point_settings: compute_shader::PointSettings,
+
     constants_bind_group: compute_shader::bind_groups::BindGroup0,
     state_bind_group: compute_shader::bind_groups::BindGroup1,
     trail_read_bind_group: compute_shader::bind_groups::BindGroup2,
@@ -34,14 +37,14 @@ impl Pipeline {
 
         let constants_buffer = buffer(
             "constants",
-            size_of::<Constants>() as u64,
+            size_of::<compute_shader::Constants>() as u64,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         queue.write_buffer(&constants_buffer, 0, bytemuck::bytes_of(&CONSTANTS));
 
         let point_settings_buffer = buffer(
             "point_settings",
-            size_of::<PointSettings>() as u64,
+            size_of::<compute_shader::PointSettings>() as u64,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         // New point settings are written every frame
@@ -106,47 +109,7 @@ impl Pipeline {
         let fbo_texture = texture(
             "fbo",
             wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST,
-        );
-        println!(
-            "{:?} = {} * {}",
-            fbo_texture.size(),
-            fbo_texture.width(),
-            fbo_texture.height()
-        );
-
-        // WIP: initialize texture with random data, just to make sure the texture viewing code
-        // works
-        let mut fbo_values = vec![0u8; (SIMULATION_WIDTH * SIMULATION_HEIGHT * 4) as usize];
-        for (i, v) in fbo_values.iter_mut().enumerate() {
-            if i % 4 == 3 {
-                // alpha is always maximized
-                *v = 255;
-            } else {
-                // random color channel
-                *v = rand::random_range(0..u8::MAX);
-            }
-        }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &fbo_texture,
-                mip_level: 0,
-                origin: Default::default(),
-                aspect: Default::default(),
-            },
-            &fbo_values,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(SIMULATION_WIDTH * 4),
-                rows_per_image: Some(SIMULATION_HEIGHT),
-            },
-            wgpu::Extent3d {
-                width: SIMULATION_WIDTH,
-                height: SIMULATION_HEIGHT,
-                depth_or_array_layers: 1,
-            },
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
         fn texture_view(
@@ -298,6 +261,9 @@ impl Pipeline {
         );
 
         Self {
+            point_settings_buffer,
+            point_settings: DEFAULT_POINT_SETTINGS[0],
+
             constants_bind_group,
             trail_read_bind_group,
             trail_write_bind_group,
@@ -320,11 +286,17 @@ impl Pipeline {
         surface_texture: &wgpu::SurfaceTexture,
         surface_format: wgpu::TextureFormat,
     ) {
+        // TODO: only write this as needed, instead of every frame.
+        queue.write_buffer(
+            &self.point_settings_buffer,
+            0,
+            bytemuck::bytes_of(&self.point_settings),
+        );
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
         });
 
-        /*
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("compute_pass"),
@@ -368,7 +340,6 @@ impl Pipeline {
                 1,
             );
         }
-        */
 
         let surface_texture_view =
             surface_texture
