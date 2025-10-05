@@ -1,27 +1,20 @@
 use crate::constants::*;
+use crate::shaders::compute_shader;
+use crate::shaders::render_shader;
 
 pub struct Pipeline {
-    constants_buffer: wgpu::Buffer,
-    point_settings_buffer: wgpu::Buffer,
-    trail_read_texture: wgpu::Texture,
-    trail_write_texture: wgpu::Texture,
-    particle_params_buffer: wgpu::Buffer,
-    particle_counts_buffer: wgpu::Buffer,
-    fbo_texture: wgpu::Texture,
-
-    constants_bind_group: wgpu::BindGroup,
-    trail_read_bind_group: wgpu::BindGroup,
-    trail_write_bind_group: wgpu::BindGroup,
-    state_bind_group: wgpu::BindGroup,
+    constants_bind_group: compute_shader::bind_groups::BindGroup0,
+    state_bind_group: compute_shader::bind_groups::BindGroup1,
+    trail_read_bind_group: compute_shader::bind_groups::BindGroup2,
+    trail_write_bind_group: compute_shader::bind_groups::BindGroup2,
 
     setter_pipeline: wgpu::ComputePipeline,
     move_pipeline: wgpu::ComputePipeline,
     deposit_pipeline: wgpu::ComputePipeline,
     diffusion_pipeline: wgpu::ComputePipeline,
 
-    fbo_sampler: wgpu::Sampler,
-    fbo_bind_group: wgpu::BindGroup,
-    fbo_pipeline: wgpu::RenderPipeline,
+    render_bind_group: render_shader::bind_groups::BindGroup0,
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Pipeline {
@@ -52,6 +45,15 @@ impl Pipeline {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         // New point settings are written every frame
+        // TODO: make them only written on-demand
+
+        let constants_bind_group = compute_shader::bind_groups::BindGroup0::from_bindings(
+            device,
+            compute_shader::bind_groups::BindGroupLayout0 {
+                constants: constants_buffer.as_entire_buffer_binding(),
+                params: point_settings_buffer.as_entire_buffer_binding(),
+            },
+        );
 
         // Randomly initialize the particles' starting positions and headings
         let mut particles = vec![0u16; SIMULATION_NUM_PARTICLES * 4];
@@ -83,11 +85,9 @@ impl Pipeline {
             (SIMULATION_WIDTH * SIMULATION_HEIGHT * 4) as u64,
             wgpu::BufferUsages::STORAGE,
         );
-        // The counter is re-initialized every frame
+        // The counter is re-initialized by the shader every frame
 
-        let texture = |label: &str,
-                       format: wgpu::TextureFormat,
-                       view_formats: &[wgpu::TextureFormat]| {
+        let texture = |label: &str, format: wgpu::TextureFormat, usage: wgpu::TextureUsages| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(&format!("{label}_texture")),
                 size: wgpu::Extent3d {
@@ -99,124 +99,26 @@ impl Pipeline {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
-                view_formats,
+                usage,
+                view_formats: &[],
             })
         };
-
-        let trail_read_texture = texture("trail_read", wgpu::TextureFormat::R32Float, &[]);
-        let trail_write_texture = texture("trail_write", wgpu::TextureFormat::R32Float, &[]);
-        let fbo_texture = texture("fbo", wgpu::TextureFormat::Rgba8Unorm, &[]);
-
-        // Specifying a bind group layout lets us re-use the same bind group between shaders.
-        let buffer_entry = |i: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
-            binding: i,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let storage_texture_entry =
-            |i: u32, access: wgpu::StorageTextureAccess, format: wgpu::TextureFormat| {
-                wgpu::BindGroupLayoutEntry {
-                    binding: i,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access,
-                        format,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                }
-            };
-        let constants_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("constants_bind_group_layout"),
-                entries: &[
-                    // constants
-                    buffer_entry(0, wgpu::BufferBindingType::Uniform),
-                    // point_settings
-                    buffer_entry(1, wgpu::BufferBindingType::Uniform),
-                ],
-            });
-        let trail_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("trail_bind_group_layout"),
-                entries: &[
-                    // trail_read
-                    storage_texture_entry(
-                        0,
-                        wgpu::StorageTextureAccess::ReadOnly,
-                        wgpu::TextureFormat::R32Float,
-                    ),
-                    // trail_write
-                    storage_texture_entry(
-                        1,
-                        wgpu::StorageTextureAccess::WriteOnly,
-                        wgpu::TextureFormat::R32Float,
-                    ),
-                ],
-            });
-        let state_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("storage_bind_group_layout"),
-                entries: &[
-                    // particle_params
-                    buffer_entry(0, wgpu::BufferBindingType::Storage { read_only: false }),
-                    // particle_counts
-                    buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
-                    // fbo_display
-                    storage_texture_entry(
-                        2,
-                        wgpu::StorageTextureAccess::WriteOnly,
-                        wgpu::TextureFormat::Rgba8Unorm,
-                    ),
-                ],
-            });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline_layout"),
-            bind_group_layouts: &[
-                &constants_bind_group_layout,
-                &trail_bind_group_layout,
-                &state_bind_group_layout,
-            ],
-            push_constant_ranges: &[],
-        });
-
-        fn buffer_resource<'a>(i: u32, buffer: &'a wgpu::Buffer) -> wgpu::BindGroupEntry<'a> {
-            wgpu::BindGroupEntry {
-                binding: i,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }
-        }
-
-        let constants_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("constants_bind_group"),
-            layout: &constants_bind_group_layout,
-            entries: &[
-                buffer_resource(0, &constants_buffer),
-                buffer_resource(1, &point_settings_buffer),
-            ],
-        });
+        let fbo_texture = texture(
+            "fbo",
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
         fn texture_view(
             label: &str,
             texture: &wgpu::Texture,
             format: Option<wgpu::TextureFormat>,
+            usage: wgpu::TextureUsages,
         ) -> wgpu::TextureView {
             texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some(&format!("{label}_texture_view")),
                 format,
                 dimension: Some(wgpu::TextureViewDimension::D2),
-                usage: Some(
-                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
-                ),
+                usage: Some(usage),
                 aspect: wgpu::TextureAspect::All,
                 base_mip_level: 0,
                 mip_level_count: None,
@@ -224,67 +126,86 @@ impl Pipeline {
                 array_layer_count: None,
             })
         }
-        fn texture_resource<'a>(
-            i: u32,
-            texture_view: &'a wgpu::TextureView,
-        ) -> wgpu::BindGroupEntry<'a> {
-            wgpu::BindGroupEntry {
-                binding: i,
-                resource: wgpu::BindingResource::TextureView(texture_view),
-            }
-        }
-        let trail_read_texture_view = texture_view("trail_read", &trail_read_texture, None);
-        let trail_write_texture_view = texture_view("trail_write", &trail_write_texture, None);
-        let trail_read_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("trail_read_bind_group"),
-            layout: &trail_bind_group_layout,
-            entries: &[
-                texture_resource(0, &trail_read_texture_view),
-                texture_resource(1, &trail_write_texture_view),
-            ],
+        let fbo_texture_view = texture_view(
+            "fbo",
+            &fbo_texture,
+            None,
+            wgpu::TextureUsages::STORAGE_BINDING,
+        );
+
+        let state_bind_group = compute_shader::bind_groups::BindGroup1::from_bindings(
+            device,
+            compute_shader::bind_groups::BindGroupLayout1 {
+                particle_params: particle_params_buffer.as_entire_buffer_binding(),
+                particle_counters: particle_counts_buffer.as_entire_buffer_binding(),
+                fbo_display: &fbo_texture_view,
+            },
+        );
+
+        let trail_read_texture = texture(
+            "trail_read",
+            wgpu::TextureFormat::R32Float,
+            wgpu::TextureUsages::STORAGE_BINDING,
+        );
+        let trail_write_texture = texture(
+            "trail_write",
+            wgpu::TextureFormat::R32Float,
+            wgpu::TextureUsages::STORAGE_BINDING,
+        );
+
+        let trail_read_texture_view = texture_view(
+            "trail_read",
+            &trail_read_texture,
+            None,
+            wgpu::TextureUsages::STORAGE_BINDING,
+        );
+        let trail_write_texture_view = texture_view(
+            "trail_write",
+            &trail_write_texture,
+            None,
+            wgpu::TextureUsages::STORAGE_BINDING,
+        );
+
+        let trail_read_bind_group = compute_shader::bind_groups::BindGroup2::from_bindings(
+            device,
+            compute_shader::bind_groups::BindGroupLayout2 {
+                trail_read: &trail_read_texture_view,
+                trail_write: &trail_write_texture_view,
+            },
+        );
+        let trail_write_bind_group = compute_shader::bind_groups::BindGroup2::from_bindings(
+            device,
+            compute_shader::bind_groups::BindGroupLayout2 {
+                trail_read: &trail_write_texture_view,
+                trail_write: &trail_read_texture_view,
+            },
+        );
+
+        let setter_pipeline = compute_shader::compute::create_cs_setter_pipeline(device);
+        let move_pipeline = compute_shader::compute::create_cs_move_pipeline(device);
+        let deposit_pipeline = compute_shader::compute::create_cs_deposit_pipeline(device);
+        let diffusion_pipeline = compute_shader::compute::create_cs_diffusion_pipeline(device);
+
+        let render_shader_module = render_shader::create_shader_module(device);
+        let render_pipeline_layout = render_shader::create_pipeline_layout(device);
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("render pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: render_shader::vertex_state(&render_shader_module, &render_shader::vs_entry()),
+            fragment: Some(render_shader::fragment_state(
+                &render_shader_module,
+                &render_shader::fs_entry([Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })]),
+            )),
+            primitive: Default::default(),
+            depth_stencil: Default::default(),
+            multisample: Default::default(),
+            multiview: Default::default(),
+            cache: Default::default(),
         });
-        let trail_write_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("trail_write_bind_group"),
-            layout: &trail_bind_group_layout,
-            entries: &[
-                texture_resource(0, &trail_write_texture_view),
-                texture_resource(1, &trail_read_texture_view),
-            ],
-        });
-
-        let fbo_texture_view = texture_view("fbo", &fbo_texture, None);
-
-        let state_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("state_bind_group"),
-            layout: &state_bind_group_layout,
-            entries: &[
-                buffer_resource(0, &particle_params_buffer),
-                buffer_resource(1, &particle_counts_buffer),
-                texture_resource(2, &fbo_texture_view),
-            ],
-        });
-
-        let compute_shader_module =
-            device.create_shader_module(wgpu::include_wgsl!("./shaders/computeshader.wgsl"));
-
-        let compute_pipeline = |entrypoint: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(&format!("{entrypoint}_pipeline")),
-                layout: Some(&pipeline_layout),
-                module: &compute_shader_module,
-                entry_point: Some(entrypoint),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-
-        let setter_pipeline = compute_pipeline("cs_setter");
-        let move_pipeline = compute_pipeline("cs_move");
-        let deposit_pipeline = compute_pipeline("cs_deposit");
-        let diffusion_pipeline = compute_pipeline("cs_diffusion");
-
-        let fbo_shader_module =
-            device.create_shader_module(wgpu::include_wgsl!("./shaders/textureshader.wgsl"));
 
         let fbo_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("fbo_sampler"),
@@ -301,55 +222,41 @@ impl Pipeline {
             border_color: None,
         });
 
-        let fbo_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("fbo_pipeline"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &fbo_shader_module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
+        let fbo_render_texture_view = texture_view(
+            "fbo_render",
+            &fbo_texture,
+            None,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+
+        // Only needs to be set once, when laying out where exactly on the surface we're rendering
+        // the texture.
+        let render_uniforms = render_shader::Uniforms {
+            scale: glam::Vec2::new(1.0, 1.0),
+            offset: glam::Vec2::new(0.0, 0.0),
+        };
+        let render_uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("render_uniforms"),
+            size: size_of::<render_shader::Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(
+            &render_uniforms_buffer,
+            0,
+            bytemuck::bytes_of(&render_uniforms),
+        );
+
+        let render_bind_group = render_shader::bind_groups::BindGroup0::from_bindings(
+            device,
+            render_shader::bind_groups::BindGroupLayout0 {
+                uni: render_uniforms_buffer.as_entire_buffer_binding(),
+                ourSampler: &fbo_sampler,
+                ourTexture: &fbo_render_texture_view,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &fbo_shader_module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: Default::default(),
-            multisample: Default::default(),
-            multiview: Default::default(),
-            cache: Default::default(),
-        });
-
-        let fbo_texture_view = texture_view("fbo", &fbo_texture, None);
-
-        let fbo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fbo_bind_group"),
-            layout: &fbo_pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&fbo_sampler),
-                },
-                texture_resource(1, &fbo_texture_view),
-            ],
-        });
+        );
 
         Self {
-            constants_buffer,
-            point_settings_buffer,
-            trail_read_texture,
-            trail_write_texture,
-            particle_params_buffer,
-            particle_counts_buffer,
-            fbo_texture,
-
             constants_bind_group,
             trail_read_bind_group,
             trail_write_bind_group,
@@ -360,9 +267,8 @@ impl Pipeline {
             deposit_pipeline,
             diffusion_pipeline,
 
-            fbo_sampler,
-            fbo_bind_group,
-            fbo_pipeline,
+            render_bind_group,
+            render_pipeline,
         }
     }
 
@@ -383,9 +289,9 @@ impl Pipeline {
             });
 
             compute_pass.set_pipeline(&self.setter_pipeline);
-            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
-            compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
-            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            self.constants_bind_group.set(&mut compute_pass);
+            self.state_bind_group.set(&mut compute_pass);
+            self.trail_read_bind_group.set(&mut compute_pass);
             compute_pass.dispatch_workgroups(
                 SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
                 SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
@@ -393,9 +299,7 @@ impl Pipeline {
             );
 
             compute_pass.set_pipeline(&self.move_pipeline);
-            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
-            compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
-            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            // bind groups are the same
             compute_pass.dispatch_workgroups(
                 (SIMULATION_NUM_PARTICLES
                     / (SIMULATION_WORK_GROUP_SIZE * SIMULATION_WORK_GROUP_SIZE) as usize)
@@ -405,9 +309,7 @@ impl Pipeline {
             );
 
             compute_pass.set_pipeline(&self.deposit_pipeline);
-            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
-            compute_pass.set_bind_group(1, &self.trail_read_bind_group, &[]);
-            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            // bind groups are the same
             compute_pass.dispatch_workgroups(
                 SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
                 SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
@@ -415,9 +317,8 @@ impl Pipeline {
             );
 
             compute_pass.set_pipeline(&self.diffusion_pipeline);
-            compute_pass.set_bind_group(0, &self.constants_bind_group, &[]);
-            compute_pass.set_bind_group(1, &self.trail_write_bind_group, &[]);
-            compute_pass.set_bind_group(2, &self.state_bind_group, &[]);
+            self.trail_write_bind_group.set(&mut compute_pass);
+            // other bind groups are the same
             compute_pass.dispatch_workgroups(
                 SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
                 SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
@@ -458,9 +359,9 @@ impl Pipeline {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.fbo_pipeline);
-            render_pass.set_bind_group(0, &self.fbo_bind_group, &[]);
-            render_pass.draw_indexed(0..6, 0, 0..1);
+            render_pass.set_pipeline(&self.render_pipeline);
+            self.render_bind_group.set(&mut render_pass);
+            render_pass.draw(0..6, 0..1);
         }
 
         queue.submit([encoder.finish()]);

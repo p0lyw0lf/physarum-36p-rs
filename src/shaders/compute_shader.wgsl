@@ -30,12 +30,12 @@ struct PointSettings {
 };
 @group(0) @binding(1) var<uniform> params: PointSettings;
 
-@group(1) @binding(0) var trail_read: texture_storage_2d<r32float, read>;
-@group(1) @binding(1) var trail_write: texture_storage_2d<r32float, write>;
+@group(1) @binding(0) var<storage, read_write> particle_params: array<u32>;
+@group(1) @binding(1) var<storage, read_write> particle_counters: array<atomic<u32>>;
+@group(1) @binding(2) var fbo_display: texture_storage_2d<rgba8unorm, write>;
 
-@group(2) @binding(0) var<storage, read_write> particle_params: array<u32>;
-@group(2) @binding(1) var<storage, read_write> particle_counters: array<atomic<u32>>;
-@group(2) @binding(2) var fbo_display: texture_storage_2d<rgba8unorm, write>;
+@group(2) @binding(0) var trail_read: texture_storage_2d<r32float, read>;
+@group(2) @binding(1) var trail_write: texture_storage_2d<r32float, write>;
 
 const PI: f32 = radians(180.0);
 const LIMIT: f32 = 100.0;

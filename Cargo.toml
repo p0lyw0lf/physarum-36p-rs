@@ -8,9 +8,13 @@ name = "physarum"
 path = "src/main.rs"
 
 [dependencies]
-bytemuck = "1.23.2"
+bytemuck = "1.23"
 env_logger = "0.11"
+glam = { version = "0.30", features = ["bytemuck", "encase"] }
 pollster = "0.4"
 rand = "0.9"
 wgpu = { version = "26.0" }
 winit = "0.30"
+
+[build-dependencies]
+wgsl_to_wgpu = "0.15"
