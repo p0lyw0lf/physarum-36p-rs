@@ -106,8 +106,49 @@ impl Pipeline {
         let fbo_texture = texture(
             "fbo",
             wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
         );
+        println!(
+            "{:?} = {} * {}",
+            fbo_texture.size(),
+            fbo_texture.width(),
+            fbo_texture.height()
+        );
+
+        // WIP: initialize texture with random data, just to make sure the texture viewing code
+        // works
+        let mut fbo_values = vec![0u8; (SIMULATION_WIDTH * SIMULATION_HEIGHT * 4) as usize];
+        for (i, v) in fbo_values.iter_mut().enumerate() {
+            if i % 4 == 3 {
+                // alpha is always maximized
+                *v = 255;
+            } else {
+                // random color channel
+                *v = rand::random_range(0..u8::MAX);
+            }
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &fbo_texture,
+                mip_level: 0,
+                origin: Default::default(),
+                aspect: Default::default(),
+            },
+            &fbo_values,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(SIMULATION_WIDTH * 4),
+                rows_per_image: Some(SIMULATION_HEIGHT),
+            },
+            wgpu::Extent3d {
+                width: SIMULATION_WIDTH,
+                height: SIMULATION_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+        );
+
         fn texture_view(
             label: &str,
             texture: &wgpu::Texture,
@@ -117,8 +158,8 @@ impl Pipeline {
             texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some(&format!("{label}_texture_view")),
                 format,
-                dimension: Some(wgpu::TextureViewDimension::D2),
                 usage: Some(usage),
+                dimension: Some(wgpu::TextureViewDimension::D2),
                 aspect: wgpu::TextureAspect::All,
                 base_mip_level: 0,
                 mip_level_count: None,
@@ -232,8 +273,8 @@ impl Pipeline {
         // Only needs to be set once, when laying out where exactly on the surface we're rendering
         // the texture.
         let render_uniforms = render_shader::Uniforms {
-            scale: glam::Vec2::new(1.0, 1.0),
-            offset: glam::Vec2::new(0.0, 0.0),
+            scale: glam::Vec2::new(2.0, 2.0),
+            offset: glam::Vec2::new(-1.0, -1.0),
         };
         let render_uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("render_uniforms"),
@@ -282,6 +323,8 @@ impl Pipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
         });
+
+        /*
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("compute_pass"),
@@ -325,12 +368,13 @@ impl Pipeline {
                 1,
             );
         }
+        */
 
         let surface_texture_view =
             surface_texture
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("fbo_texture_view"),
+                    label: Some("surface_texture_view"),
                     format: Some(surface_format.add_srgb_suffix()),
                     dimension: Some(wgpu::TextureViewDimension::D2),
                     usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
@@ -342,7 +386,7 @@ impl Pipeline {
                 });
 
         {
-            // Create the renderpass which will clear the screen.
+            // Create the renderpass which will clear the screen before drawing anything
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
