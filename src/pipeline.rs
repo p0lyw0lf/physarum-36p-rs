@@ -16,6 +16,7 @@ pub struct Pipeline {
     deposit_pipeline: wgpu::ComputePipeline,
     diffusion_pipeline: wgpu::ComputePipeline,
 
+    render_uniforms_buffer: wgpu::Buffer,
     render_bind_group: render_shader::bind_groups::BindGroup0,
     render_pipeline: wgpu::RenderPipeline,
 }
@@ -213,11 +214,11 @@ impl Pipeline {
 
         let fbo_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("fbo_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.,
             lod_max_clamp: 32.,
@@ -274,6 +275,7 @@ impl Pipeline {
             deposit_pipeline,
             diffusion_pipeline,
 
+            render_uniforms_buffer,
             render_bind_group,
             render_pipeline,
         }
@@ -355,6 +357,45 @@ impl Pipeline {
                     base_array_layer: 0,
                     array_layer_count: None,
                 });
+
+        /*
+         * source: 1u = SIMULATION_WIDTH
+         * destination: 1u = surface_texture.texture.width() / 2 * x_scale
+         *
+         * source: 1v = SIMULATION_HEIGHT
+         * destination: 1v = surface_texture.texture.height() / 2 * y_scale
+         *
+         * Desired: 1us / 1vs = 1ud / 1vd
+         * -> SIMULATION_WIDTH / SIMULATION_HEIGHT = (width() * x_scale) / (height() * y_scale)
+         * -> (SIMULATION_WIDTH / SIMULATION_HEIGHT) / (width() / height()) = x_scale / y_scale
+         *
+         * Desired: min(x_scale, y_scale) = 2.0, so that we always scale up, never down
+         */
+
+        let source_aspect = SIMULATION_WIDTH as f32 / SIMULATION_HEIGHT as f32;
+        let destination_aspect =
+            surface_texture.texture.width() as f32 / surface_texture.texture.height() as f32;
+
+        // Calculate the maximum of each of these, assuming the other is == 1.0
+        let x_scale = source_aspect / destination_aspect;
+        let y_scale = destination_aspect / source_aspect;
+
+        let render_uniforms = if x_scale > y_scale {
+            render_shader::Uniforms {
+                scale: glam::Vec2::new(2.0 * x_scale, 2.0),
+                offset: glam::Vec2::new(-x_scale, -1.0),
+            }
+        } else {
+            render_shader::Uniforms {
+                scale: glam::Vec2::new(2.0, 2.0 * y_scale),
+                offset: glam::Vec2::new(-1.0, -y_scale),
+            }
+        };
+        queue.write_buffer(
+            &self.render_uniforms_buffer,
+            0,
+            bytemuck::bytes_of(&render_uniforms),
+        );
 
         {
             // Create the renderpass which will clear the screen before drawing anything

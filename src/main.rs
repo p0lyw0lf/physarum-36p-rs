@@ -74,7 +74,7 @@ impl State {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             width: self.size.width,
             height: self.size.height,
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
             present_mode: wgpu::PresentMode::AutoVsync,
         };
         self.surface.configure(&self.device, &surface_config);
