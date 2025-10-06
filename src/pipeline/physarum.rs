@@ -281,13 +281,7 @@ impl Pipeline {
         }
     }
 
-    pub fn render(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        surface_texture: &wgpu::SurfaceTexture,
-        surface_format: wgpu::TextureFormat,
-    ) {
+    pub fn prepare(&mut self, queue: &wgpu::Queue, surface_texture_size: wgpu::Extent3d) {
         // TODO: only write this as needed, instead of every frame.
         queue.write_buffer(
             &self.point_settings_buffer,
@@ -295,86 +289,23 @@ impl Pipeline {
             bytemuck::bytes_of(&self.point_settings),
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("encoder"),
-        });
-
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("compute_pass"),
-                timestamp_writes: None,
-            });
-
-            compute_pass.set_pipeline(&self.setter_pipeline);
-            self.constants_bind_group.set(&mut compute_pass);
-            self.state_bind_group.set(&mut compute_pass);
-            self.trail_read_bind_group.set(&mut compute_pass);
-            compute_pass.dispatch_workgroups(
-                SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
-                SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
-                1,
-            );
-
-            compute_pass.set_pipeline(&self.move_pipeline);
-            // bind groups are the same
-            compute_pass.dispatch_workgroups(
-                (SIMULATION_NUM_PARTICLES
-                    / (SIMULATION_WORK_GROUP_SIZE * SIMULATION_WORK_GROUP_SIZE) as usize)
-                    as u32,
-                1,
-                1,
-            );
-
-            compute_pass.set_pipeline(&self.deposit_pipeline);
-            // bind groups are the same
-            compute_pass.dispatch_workgroups(
-                SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
-                SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
-                1,
-            );
-
-            compute_pass.set_pipeline(&self.diffusion_pipeline);
-            self.trail_write_bind_group.set(&mut compute_pass);
-            // other bind groups are the same
-            compute_pass.dispatch_workgroups(
-                SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
-                SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
-                1,
-            );
-        }
-
-        let surface_texture_view =
-            surface_texture
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("surface_texture_view"),
-                    format: Some(surface_format.add_srgb_suffix()),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
-                    aspect: wgpu::TextureAspect::All,
-                    base_mip_level: 0,
-                    mip_level_count: None,
-                    base_array_layer: 0,
-                    array_layer_count: None,
-                });
-
         /*
          * source: 1u = SIMULATION_WIDTH
-         * destination: 1u = surface_texture.texture.width() / 2 * x_scale
+         * destination: 1u = surface_texture_size.width / 2 * x_scale
          *
          * source: 1v = SIMULATION_HEIGHT
-         * destination: 1v = surface_texture.texture.height() / 2 * y_scale
+         * destination: 1v = surface_texture_size.width / 2 * y_scale
          *
          * Desired: 1us / 1vs = 1ud / 1vd
-         * -> SIMULATION_WIDTH / SIMULATION_HEIGHT = (width() * x_scale) / (height() * y_scale)
-         * -> (SIMULATION_WIDTH / SIMULATION_HEIGHT) / (width() / height()) = x_scale / y_scale
+         * -> SIMULATION_WIDTH / SIMULATION_HEIGHT = (width * x_scale) / (height * y_scale)
+         * -> (SIMULATION_WIDTH / SIMULATION_HEIGHT) / (width / height) = x_scale / y_scale
          *
          * Desired: min(x_scale, y_scale) = 2.0, so that we always scale up, never down
          */
 
         let source_aspect = SIMULATION_WIDTH as f32 / SIMULATION_HEIGHT as f32;
         let destination_aspect =
-            surface_texture.texture.width() as f32 / surface_texture.texture.height() as f32;
+            surface_texture_size.width as f32 / surface_texture_size.height as f32;
 
         // Calculate the maximum of each of these, assuming the other is == 1.0
         let x_scale = source_aspect / destination_aspect;
@@ -396,30 +327,50 @@ impl Pipeline {
             0,
             bytemuck::bytes_of(&render_uniforms),
         );
+    }
 
-        {
-            // Create the renderpass which will clear the screen before drawing anything
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &surface_texture_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+    pub fn compute_pass(&self, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_pipeline(&self.setter_pipeline);
+        self.constants_bind_group.set(compute_pass);
+        self.state_bind_group.set(compute_pass);
+        self.trail_read_bind_group.set(compute_pass);
+        compute_pass.dispatch_workgroups(
+            SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
+            SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
+            1,
+        );
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            self.render_bind_group.set(&mut render_pass);
-            render_pass.draw(0..6, 0..1);
-        }
+        compute_pass.set_pipeline(&self.move_pipeline);
+        // bind groups are the same
+        compute_pass.dispatch_workgroups(
+            (SIMULATION_NUM_PARTICLES
+                / (SIMULATION_WORK_GROUP_SIZE * SIMULATION_WORK_GROUP_SIZE) as usize)
+                as u32,
+            1,
+            1,
+        );
 
-        queue.submit([encoder.finish()]);
+        compute_pass.set_pipeline(&self.deposit_pipeline);
+        // bind groups are the same
+        compute_pass.dispatch_workgroups(
+            SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
+            SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
+            1,
+        );
+
+        compute_pass.set_pipeline(&self.diffusion_pipeline);
+        self.trail_write_bind_group.set(compute_pass);
+        // other bind groups are the same
+        compute_pass.dispatch_workgroups(
+            SIMULATION_WIDTH / SIMULATION_WORK_GROUP_SIZE,
+            SIMULATION_HEIGHT / SIMULATION_WORK_GROUP_SIZE,
+            1,
+        );
+    }
+
+    pub fn render_pass(&self, render_pass: &mut wgpu::RenderPass) {
+        render_pass.set_pipeline(&self.render_pipeline);
+        self.render_bind_group.set(render_pass);
+        render_pass.draw(0..6, 0..1);
     }
 }

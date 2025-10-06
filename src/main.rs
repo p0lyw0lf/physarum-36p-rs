@@ -97,7 +97,7 @@ impl State {
         self.pipeline.render(
             &self.device,
             &self.queue,
-            &surface_texture,
+            &surface_texture.texture,
             self.surface_format,
         );
 
@@ -114,11 +114,8 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Create window object
-        let window = Arc::new(
-            event_loop
-                .create_window(Window::default_attributes())
-                .unwrap(),
-        );
+        let window_attributes = Window::default_attributes().with_title("physarum-36p-rs");
+        let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
         let state = pollster::block_on(State::new(window.clone()));
         self.state = Some(state);
