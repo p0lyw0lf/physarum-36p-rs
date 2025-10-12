@@ -41,7 +41,7 @@ impl Pipeline<'_> {
             .add_text(
                 Text::new("This is some text!")
                     .with_scale(FONT_SIZE)
-                    .with_color([0.9, 0.5, 0.5, 1.0]),
+                    .with_color([1.0, 1.0, 1.0, 1.0]), // white
             )
             .with_layout(Layout::default())
             .to_owned();

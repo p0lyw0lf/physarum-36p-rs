@@ -1,3 +1,5 @@
+use winit::dpi::PhysicalSize;
+
 use crate::constants::*;
 use crate::shaders::compute_shader;
 use crate::shaders::render_shader;
@@ -237,8 +239,8 @@ impl Pipeline {
         // Only needs to be set once, when laying out where exactly on the surface we're rendering
         // the texture.
         let render_uniforms = render_shader::Uniforms {
-            scale: glam::Vec2::new(2.0, 2.0),
-            offset: glam::Vec2::new(-1.0, -1.0),
+            scale: glam::vec2(2.0, 2.0),
+            offset: glam::vec2(-1.0, -1.0),
         };
         let render_uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("render_uniforms"),
@@ -281,51 +283,172 @@ impl Pipeline {
         }
     }
 
-    pub fn prepare(&mut self, queue: &wgpu::Queue, surface_texture_size: wgpu::Extent3d) {
+    pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
+        let render_uniforms = Self::calculate_uniforms(new_size);
+        queue.write_buffer(
+            &self.render_uniforms_buffer,
+            0,
+            bytemuck::bytes_of(&render_uniforms),
+        );
+    }
+
+    fn calculate_uniforms(size: PhysicalSize<u32>) -> render_shader::Uniforms {
+        let x = 0f32;
+        let y = HEADER_HEIGHT as f32;
+        let width = size.width as f32;
+        let height = size.height.saturating_sub(HEADER_HEIGHT) as f32;
+        if width == 0.0 || height == 0.0 {
+            return render_shader::Uniforms {
+                scale: glam::Vec2::ZERO,
+                offset: glam::Vec2::ZERO,
+            };
+        }
+
+        /*
+         * The overall transformation we want to accomplish is transforming the "source pixels" of
+         * the simulation to the "destination pixels" of the screen, while preserving aspect ratio.
+         * This transformation can be modeled as follows:
+         *
+         * $$
+         * t: pxs -> pxd
+         * t(pxs) = pxs * (s, s) + (o_x, o_y)
+         * $$
+         *
+         * When preserving aspect ratio, there are two things we can do: "fit" or "fill". Both look
+         * at both possible scaling ratios, $w_d / w_s$ and $h_d / h_s$, where "fit" takes the
+         * minimum and "fill" takes the maximum. Here, we decide to use "fill", though all
+         * following equations will work with either:
+         *
+         * $$
+         * s = max(w_d / w_s, h_d / h_s)
+         * $$
+         *
+         * Then, we need to set a boundary condition to find the correct offset. In our case, we'd
+         * like to center the image, which can be expressed as:
+         *
+         * $$
+         * t(w_s/2, h_s/2) = (x + w_d/2, u + h_d/2)
+         * $$
+         *
+         * And, solving:
+         *
+         * $$
+         * => s * w_s/2 + o_x = x + w_d/2, s * h_s / 2 + o_y = y + h_d/2
+         * => o_x = x + 0.5*w_d - s*0.5*w_s, o_y = y + 0.5*h_d - s*0.5*h_s
+         * $$
+         */
+        let source_dims = glam::vec2(SIMULATION_WIDTH as f32, SIMULATION_HEIGHT as f32);
+        let destination_dims = glam::vec2(width, height);
+        let destination_offset = glam::vec2(x, y);
+        let direct_scale = destination_dims / source_dims;
+        let overall_scale = if direct_scale.x > direct_scale.y {
+            direct_scale.x
+        } else {
+            direct_scale.y
+        };
+        let overall_offset =
+            destination_offset + 0.5 * (destination_dims - overall_scale * source_dims);
+
+        /*
+         * However! There are a few more transformations that happen in the interim that we have to
+         * account for. The first is the mapping from the "source pixels" to the actual texture
+         * UVs.
+         *
+         * This mapping looks something like:
+         *
+         * 0     w_s       0      1
+         * . ---- . 0      . ---- . 0
+         * | tttt |     => | tttt |
+         * | t    |        | t    |
+         * . ---- . h_s => . ---- . 1
+         *
+         * This is represented by the following transformation:
+         *
+         * $$
+         * pxs_to_uvs: pxs -> uvs
+         * pxs_to_uvs(pxs) = pxs / (w_s, h_s)
+         * $$
+         *
+         * The next transformation turns the source uvs into the destination uvs. This is the only
+         * transformation we actually control as part of the shader.
+         *
+         * $$
+         * uvs_to_uvd: uvs -> uvd
+         * uvs_to_uvd(uvs) = uvs * scale + offset
+         * $$
+         *
+         * Finally, there's the rendering of the destination uvs to the screen. This looks
+         * something like:
+         *
+         * -1      0      1         0            w_d
+         *  . ---- . ---- . 1       . ---- . ---- . 0
+         *  |      |      |         |      |      |
+         *  |      |      |         |      |      |
+         *  . ---- . ---- . 0   =>  . ---- . ---- .
+         *  |      |      |         |      |      |
+         *  |      |      |         |      |      |
+         *  . ---- . ---- . -1      . ---- . ---- . h_d
+         *
+         *
+         * $$
+         * uvd_to_pxd: uvd -> pxd
+         * uvd_to_pxd(uvd) => uvd * (w_d/2, -h_d/2) + (w_d/2, h_d/2)
+         * $$
+         *
+         * So, we want to satisfy the following equation, solving for the $scale$ and $offset$
+         * vectors that make up $uvs_to_uvd$:
+         *
+         * $$
+         * t(pxs) = uvd_to_pxd(uvs_to_uvd(pxs_to_uvs(pxs)))
+         * $$
+         *
+         * It's possible to analyze that equation, but it's a bit tedious. Instead, let's model
+         * each transformation with homogenous coordinates, so it just becomes a series of matrix
+         * multiplications:
+         *
+         * $$
+         *    T * pxs = uvd_to_pxd * uvs_to_uvd * pxs_to_uvs * pxs
+         * => T = uvd_to_pxd * uvs_to_uvd * pxs_to_uvs
+         * => uvd_to_pxd^{-1} * T * pxs_to_uvs^{-1} = uvs_to_uvd
+         * => uvs_to_uvd = [[ w_d/2,    0, w_d/2 ],
+         *                  [   0, -h_d/2, h_d/2 ],
+         *                  [   0,    0,     1 ]]^{-1}
+         *               * [[ s, 0, o_x ],
+         *                  [ 0, s, o_y ],
+         *                  [ 0, 0,   1 ]]
+         *               * [[ 1/w_s,     0, 0 ]
+         *                  [     0, 1/h_s, 0 ]
+         *                  [     0,     0, 1 ]]^{-1}
+         * => uvs_to_uvd = [[ 2/w_d,      0, -1 ],
+         *                  [     0, -2/h_d,  1 ],
+         *                  [     0,      0,    1 ]]
+         *               * [[ s, 0, o_x ],
+         *                  [ 0, s, o_y ],
+         *                  [ 0, 0,   1 ]]
+         *               * [[ w_s,   0, 0 ]
+         *                  [   0, h_s, 0 ]
+         *                  [   0,   0, 1 ]]
+         * => uvs_to_uvd = [[ 2*s*w_s/w_d,            0, 2*o_x/w_d - 1 ]
+         *                  [           0, -2*s*h_s/h_d, 1 - 2*o_y/h_d ]
+         *                  [           0,            0,             1 ]]
+         *
+         * $$
+         */
+        let flip = glam::vec2(1.0, -1.0);
+        let scale = 2.0 * overall_scale * source_dims / destination_dims;
+        let offset = 2.0 * overall_offset / destination_dims - 1.0;
+        render_shader::Uniforms {
+            scale: scale * flip,
+            offset: offset * flip,
+        }
+    }
+
+    pub fn prepare(&mut self, queue: &wgpu::Queue) {
         // TODO: only write this as needed, instead of every frame.
         queue.write_buffer(
             &self.point_settings_buffer,
             0,
             bytemuck::bytes_of(&self.point_settings),
-        );
-
-        /*
-         * source: 1u = SIMULATION_WIDTH
-         * destination: 1u = surface_texture_size.width / 2 * x_scale
-         *
-         * source: 1v = SIMULATION_HEIGHT
-         * destination: 1v = surface_texture_size.width / 2 * y_scale
-         *
-         * Desired: 1us / 1vs = 1ud / 1vd
-         * -> SIMULATION_WIDTH / SIMULATION_HEIGHT = (width * x_scale) / (height * y_scale)
-         * -> (SIMULATION_WIDTH / SIMULATION_HEIGHT) / (width / height) = x_scale / y_scale
-         *
-         * Desired: min(x_scale, y_scale) = 2.0, so that we always scale up, never down
-         */
-
-        let source_aspect = SIMULATION_WIDTH as f32 / SIMULATION_HEIGHT as f32;
-        let destination_aspect =
-            surface_texture_size.width as f32 / surface_texture_size.height as f32;
-
-        // Calculate the maximum of each of these, assuming the other is == 1.0
-        let x_scale = source_aspect / destination_aspect;
-        let y_scale = destination_aspect / source_aspect;
-
-        let render_uniforms = if x_scale > y_scale {
-            render_shader::Uniforms {
-                scale: glam::Vec2::new(2.0 * x_scale, 2.0),
-                offset: glam::Vec2::new(-x_scale, -1.0),
-            }
-        } else {
-            render_shader::Uniforms {
-                scale: glam::Vec2::new(2.0, 2.0 * y_scale),
-                offset: glam::Vec2::new(-1.0, -y_scale),
-            }
-        };
-        queue.write_buffer(
-            &self.render_uniforms_buffer,
-            0,
-            bytemuck::bytes_of(&render_uniforms),
         );
     }
 

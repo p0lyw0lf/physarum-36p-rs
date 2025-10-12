@@ -22,6 +22,7 @@ impl Pipeline {
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
+        self.physarum.resize(queue, new_size);
         self.text.resize(queue, new_size);
     }
 
@@ -32,7 +33,7 @@ impl Pipeline {
         surface_texture: &wgpu::Texture,
         surface_format: wgpu::TextureFormat,
     ) {
-        self.physarum.prepare(queue, surface_texture.size());
+        self.physarum.prepare(queue);
         self.text.prepare(device, queue);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
