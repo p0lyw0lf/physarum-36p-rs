@@ -1,3 +1,5 @@
+#![allow(clippy::approx_constant)]
+
 use std::sync::Arc;
 
 use winit::{
@@ -43,9 +45,9 @@ impl State {
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
 
-        let pipeline = crate::pipeline::Pipeline::new(&device, &queue, surface_format);
+        let pipeline = crate::pipeline::Pipeline::new(&device, &queue, size, surface_format);
 
-        let state = State {
+        let mut state = State {
             window,
             device,
             queue,
@@ -65,7 +67,7 @@ impl State {
         &self.window
     }
 
-    fn configure_surface(&self) {
+    fn configure_surface(&mut self) {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: self.surface_format,
@@ -78,6 +80,7 @@ impl State {
             present_mode: wgpu::PresentMode::AutoVsync,
         };
         self.surface.configure(&self.device, &surface_config);
+        self.pipeline.resize(&self.queue, self.size);
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
