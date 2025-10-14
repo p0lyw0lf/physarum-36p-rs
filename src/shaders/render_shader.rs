@@ -15,7 +15,7 @@ pub mod bind_groups {
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -201,9 +201,11 @@ pub fn create_pipeline_layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
 pub struct Uniforms {
     pub scale: glam::Vec2,
     pub offset: glam::Vec2,
+    pub lower_bound: glam::Vec2,
+    pub upper_bound: glam::Vec2,
 }
 const _: () = assert!(
-    std::mem::size_of::<Uniforms>() == 16,
+    std::mem::size_of::<Uniforms>() == 32,
     "size of Uniforms does not match WGSL"
 );
 const _: () = assert!(
@@ -213,5 +215,13 @@ const _: () = assert!(
 const _: () = assert!(
     std::mem::offset_of!(Uniforms, offset) == 8,
     "offset of Uniforms.offset does not match WGSL"
+);
+const _: () = assert!(
+    std::mem::offset_of!(Uniforms, lower_bound) == 16,
+    "offset of Uniforms.lower_bound does not match WGSL"
+);
+const _: () = assert!(
+    std::mem::offset_of!(Uniforms, upper_bound) == 24,
+    "offset of Uniforms.upper_bound does not match WGSL"
 );
 

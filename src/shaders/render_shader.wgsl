@@ -6,6 +6,8 @@ struct VertexShaderOutput {
 struct Uniforms {
   scale: vec2f,
   offset: vec2f,
+  lower_bound: vec2f,
+  upper_bound: vec2f,
 }
 @group(0) @binding(2) var<uniform> uni: Uniforms;
 
@@ -35,5 +37,9 @@ struct Uniforms {
 @group(0) @binding(1) var ourTexture: texture_2d<f32>;
 
 @fragment fn fs(fsInput: VertexShaderOutput) -> @location(0) vec4f {
-    return textureSample(ourTexture, ourSampler, fsInput.texcoord);
+    let xy = fsInput.position.xy;
+    if (all(uni.lower_bound <= xy) && all(xy <= uni.upper_bound)) {
+        return textureSample(ourTexture, ourSampler, fsInput.texcoord);
+    }
+    discard;
 }

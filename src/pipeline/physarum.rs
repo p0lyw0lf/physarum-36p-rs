@@ -1,3 +1,4 @@
+use bytemuck::Zeroable;
 use winit::dpi::PhysicalSize;
 
 use crate::constants::*;
@@ -236,23 +237,13 @@ impl Pipeline {
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
-        // Only needs to be set once, when laying out where exactly on the surface we're rendering
-        // the texture.
-        let render_uniforms = render_shader::Uniforms {
-            scale: glam::vec2(2.0, 2.0),
-            offset: glam::vec2(-1.0, -1.0),
-        };
         let render_uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("render_uniforms"),
             size: size_of::<render_shader::Uniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(
-            &render_uniforms_buffer,
-            0,
-            bytemuck::bytes_of(&render_uniforms),
-        );
+        // Set when screen is resized
 
         let render_bind_group = render_shader::bind_groups::BindGroup0::from_bindings(
             device,
@@ -293,15 +284,12 @@ impl Pipeline {
     }
 
     fn calculate_uniforms(size: PhysicalSize<u32>) -> render_shader::Uniforms {
-        let x = 0f32;
-        let y = HEADER_HEIGHT as f32;
-        let width = size.width as f32;
-        let height = size.height.saturating_sub(HEADER_HEIGHT) as f32;
-        if width == 0.0 || height == 0.0 {
-            return render_shader::Uniforms {
-                scale: glam::Vec2::ZERO,
-                offset: glam::Vec2::ZERO,
-            };
+        let destination_x = 0f32;
+        let destination_y = HEADER_HEIGHT as f32;
+        let destination_width = size.width as f32;
+        let destination_height = size.height.saturating_sub(HEADER_HEIGHT) as f32;
+        if destination_width == 0.0 || destination_height == 0.0 {
+            return render_shader::Uniforms::zeroed();
         }
 
         /*
@@ -337,17 +325,17 @@ impl Pipeline {
          * => o_x = x + 0.5*w_d - s*0.5*w_s, o_y = y + 0.5*h_d - s*0.5*h_s
          * $$
          */
-        let source_dims = glam::vec2(SIMULATION_WIDTH as f32, SIMULATION_HEIGHT as f32);
-        let destination_dims = glam::vec2(width, height);
-        let destination_offset = glam::vec2(x, y);
-        let direct_scale = destination_dims / source_dims;
+        let source_size = glam::vec2(SIMULATION_WIDTH as f32, SIMULATION_HEIGHT as f32);
+        let destination_size = glam::vec2(destination_width, destination_height);
+        let destination_offset = glam::vec2(destination_x, destination_y);
+        let direct_scale = destination_size / source_size;
         let overall_scale = if direct_scale.x > direct_scale.y {
             direct_scale.x
         } else {
             direct_scale.y
         };
         let overall_offset =
-            destination_offset + 0.5 * (destination_dims - overall_scale * source_dims);
+            destination_offset + 0.5 * (destination_size - overall_scale * source_size);
 
         /*
          * However! There are a few more transformations that happen in the interim that we have to
@@ -380,19 +368,19 @@ impl Pipeline {
          * Finally, there's the rendering of the destination uvs to the screen. This looks
          * something like:
          *
-         * -1      0      1         0            w_d
+         * -1      0      1         0            sw_d
          *  . ---- . ---- . 1       . ---- . ---- . 0
          *  |      |      |         |      |      |
          *  |      |      |         |      |      |
          *  . ---- . ---- . 0   =>  . ---- . ---- .
          *  |      |      |         |      |      |
          *  |      |      |         |      |      |
-         *  . ---- . ---- . -1      . ---- . ---- . h_d
+         *  . ---- . ---- . -1      . ---- . ---- . sh_d
          *
          *
          * $$
          * uvd_to_pxd: uvd -> pxd
-         * uvd_to_pxd(uvd) => uvd * (w_d/2, -h_d/2) + (w_d/2, h_d/2)
+         * uvd_to_pxd(uvd) => uvd * (sw_d/2, -sh_d/2) + (sw_d/2, sh_d/2)
          * $$
          *
          * So, we want to satisfy the following equation, solving for the $scale$ and $offset$
@@ -410,36 +398,56 @@ impl Pipeline {
          *    T * pxs = uvd_to_pxd * uvs_to_uvd * pxs_to_uvs * pxs
          * => T = uvd_to_pxd * uvs_to_uvd * pxs_to_uvs
          * => uvd_to_pxd^{-1} * T * pxs_to_uvs^{-1} = uvs_to_uvd
-         * => uvs_to_uvd = [[ w_d/2,    0, w_d/2 ],
-         *                  [   0, -h_d/2, h_d/2 ],
-         *                  [   0,    0,     1 ]]^{-1}
+         * => uvs_to_uvd = [[ sw_d/2,       0, sw_d/2 ],
+         *                  [      0, -sh_d/2, sh_d/2 ],
+         *                  [      0,       0,      1 ]]^{-1}
          *               * [[ s, 0, o_x ],
          *                  [ 0, s, o_y ],
          *                  [ 0, 0,   1 ]]
          *               * [[ 1/w_s,     0, 0 ]
          *                  [     0, 1/h_s, 0 ]
          *                  [     0,     0, 1 ]]^{-1}
-         * => uvs_to_uvd = [[ 2/w_d,      0, -1 ],
-         *                  [     0, -2/h_d,  1 ],
-         *                  [     0,      0,    1 ]]
+         * => uvs_to_uvd = [[ 2/sw_d,       0, -1 ],
+         *                  [      0, -2/sh_d,  1 ],
+         *                  [      0,       0,  1 ]]
          *               * [[ s, 0, o_x ],
          *                  [ 0, s, o_y ],
          *                  [ 0, 0,   1 ]]
          *               * [[ w_s,   0, 0 ]
          *                  [   0, h_s, 0 ]
          *                  [   0,   0, 1 ]]
-         * => uvs_to_uvd = [[ 2*s*w_s/w_d,            0, 2*o_x/w_d - 1 ]
-         *                  [           0, -2*s*h_s/h_d, 1 - 2*o_y/h_d ]
-         *                  [           0,            0,             1 ]]
-         *
+         * => uvs_to_uvd = [[ 2*s*w_s/sw_d,             0, 2*o_x/sw_d - 1 ]
+         *                  [            0, -2*s*h_s/sh_d, 1 - 2*o_y/sh_d ]
+         *                  [            0,             0,              1 ]]
          * $$
+         *
+         * For convenience, we'll apply the y-flip at the end.
          */
+        let screen_width = size.width as f32;
+        let screen_height = size.height as f32;
+        let screen_size = glam::vec2(screen_width, screen_height);
+        let scale = 2.0 * overall_scale * source_size / screen_size;
+        let offset = 2.0 * overall_offset / screen_size - 1.0;
+
+        /*
+         * Because we are using a "fill" transform, we need to clip the edges of the texture to the
+         * exact places we're drawing to on the screen. Specifically, everything between (x, y)pxd
+         * and (x + width, y + height)pxd is allowed to be drawn, and anything outside needs to be
+         * set transparent.
+         *
+         * Fortunately, these coordinates the fragment shader works on are already framebuffer
+         * coordinates, so we can just use those directly:
+         */
+        let lower_bound = destination_offset;
+        let upper_bound = destination_offset + destination_size;
+
+        // Applying all flips needed for the vertex shader:
         let flip = glam::vec2(1.0, -1.0);
-        let scale = 2.0 * overall_scale * source_dims / destination_dims;
-        let offset = 2.0 * overall_offset / destination_dims - 1.0;
         render_shader::Uniforms {
             scale: scale * flip,
             offset: offset * flip,
+            lower_bound,
+            upper_bound,
         }
     }
 
