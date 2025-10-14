@@ -1,7 +1,7 @@
 use crate::shaders::compute_shader::Constants;
 use crate::shaders::compute_shader::PointSettings;
 
-pub const HEADER_HEIGHT: u32 = 120;
+pub const HEADER_HEIGHT: u32 = 60;
 
 pub const SIMULATION_WIDTH: u32 = 1280;
 pub const SIMULATION_HEIGHT: u32 = 736;
