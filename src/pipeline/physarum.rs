@@ -3,11 +3,11 @@ use winit::dpi::PhysicalSize;
 
 use crate::constants::*;
 use crate::shaders::compute_shader;
+use crate::shaders::compute_shader::PointSettings;
 use crate::shaders::render_shader;
 
 pub struct Pipeline {
     point_settings_buffer: wgpu::Buffer,
-    point_settings: compute_shader::PointSettings,
 
     constants_bind_group: compute_shader::bind_groups::BindGroup0,
     state_bind_group: compute_shader::bind_groups::BindGroup1,
@@ -256,7 +256,6 @@ impl Pipeline {
 
         Self {
             point_settings_buffer,
-            point_settings: DEFAULT_POINT_SETTINGS[0],
 
             constants_bind_group,
             trail_read_bind_group,
@@ -451,13 +450,8 @@ impl Pipeline {
         }
     }
 
-    pub fn prepare(&mut self, queue: &wgpu::Queue) {
-        // TODO: only write this as needed, instead of every frame.
-        queue.write_buffer(
-            &self.point_settings_buffer,
-            0,
-            bytemuck::bytes_of(&self.point_settings),
-        );
+    pub fn set_settings(&mut self, queue: &wgpu::Queue, settings: &PointSettings) {
+        queue.write_buffer(&self.point_settings_buffer, 0, bytemuck::bytes_of(settings));
     }
 
     pub fn compute_pass(&self, compute_pass: &mut wgpu::ComputePass) {

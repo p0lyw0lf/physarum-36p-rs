@@ -16,6 +16,24 @@ pub const CONSTANTS: Constants = Constants {
     decay_factor: 0.75,
 };
 
+pub const DEFAULT_INCREMENT_SETTINGS: PointSettings = PointSettings {
+    default_scaling_factor: 0.01,
+    sd_base: 0.01,
+    sd_exponent: 0.01,
+    sd_amplitude: 0.01,
+    sa_base: 0.01,
+    sa_exponent: 0.01,
+    sa_amplitude: 0.01,
+    ra_base: 0.01,
+    ra_exponent: 0.01,
+    ra_amplitude: 0.01,
+    md_base: 0.01,
+    md_exponent: 0.01,
+    md_amplitude: 0.01,
+    sensor_bias_1: 0.01,
+    sensor_bias_2: 0.01,
+};
+
 pub const DEFAULT_POINT_SETTINGS: &[PointSettings; 24] = &[
     PointSettings {
         sd_base: 0.000,

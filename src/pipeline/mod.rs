@@ -1,9 +1,16 @@
 use winit::dpi::PhysicalSize;
 
+use crate::constants::DEFAULT_INCREMENT_SETTINGS;
+use crate::constants::DEFAULT_POINT_SETTINGS;
+use crate::shaders::compute_shader::PointSettings;
+
 mod physarum;
 mod text;
 
 pub struct Pipeline {
+    base_settings: PointSettings,
+    incr_settings: PointSettings,
+
     physarum: physarum::Pipeline,
     text: text::Pipeline<'static>,
 }
@@ -15,15 +22,27 @@ impl Pipeline {
         size: PhysicalSize<u32>,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        Self {
+        let mut out = Self {
+            base_settings: DEFAULT_POINT_SETTINGS[0],
+            incr_settings: DEFAULT_INCREMENT_SETTINGS,
             physarum: physarum::Pipeline::new(device, queue, surface_format),
             text: text::Pipeline::new(device, queue, size, surface_format),
-        }
+        };
+
+        out.set_settings(queue);
+
+        out
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
         self.physarum.resize(queue, new_size);
         self.text.resize(queue, new_size);
+    }
+
+    fn set_settings(&mut self, queue: &wgpu::Queue) {
+        self.physarum.set_settings(queue, &self.base_settings);
+        self.text
+            .set_settings(&self.base_settings, &self.incr_settings);
     }
 
     pub fn render(
@@ -33,7 +52,6 @@ impl Pipeline {
         surface_texture: &wgpu::Texture,
         surface_format: wgpu::TextureFormat,
     ) {
-        self.physarum.prepare(queue);
         self.text.prepare(device, queue);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
