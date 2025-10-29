@@ -6,7 +6,7 @@ use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{Key, NamedKey},
+    keyboard::{Key, NamedKey, PhysicalKey},
     window::{Fullscreen, Window, WindowId},
 };
 
@@ -161,6 +161,17 @@ impl ApplicationHandler for App {
                 } else {
                     window.set_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())));
                 }
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(key),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                state.pipeline.handle_keypress(&state.queue, key);
             }
             _ => (),
         }
