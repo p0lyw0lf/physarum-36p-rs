@@ -8,7 +8,8 @@ use crate::shaders::compute_shader::PointSettings;
 mod physarum;
 mod text;
 
-enum Mode {
+#[derive(Copy, Clone)]
+pub enum Mode {
     Normal,
     ChangeParam(ChangeParamMode),
 }
@@ -38,6 +39,7 @@ impl Pipeline {
         };
 
         out.set_settings(queue);
+        out.set_mode(Mode::Normal);
 
         out
     }
@@ -48,39 +50,29 @@ impl Pipeline {
             .set_settings(&self.base_settings, &self.incr_settings);
     }
 
+    fn set_mode(&mut self, new_mode: Mode) {
+        self.mode = new_mode;
+        self.text.set_mode(self.mode);
+    }
+
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
         self.physarum.resize(queue, new_size);
         self.text.resize(queue, new_size);
     }
 
     pub fn handle_keypress(&mut self, queue: &wgpu::Queue, key: KeyCode) {
-        use ChangeParamMode::*;
-        use KeyCode::*;
         use Mode::*;
         match self.mode {
-            Normal => match key {
-                KeyQ => self.mode = ChangeParam(SDBase),
-                KeyA => self.mode = ChangeParam(SDAmplitude),
-                KeyZ => self.mode = ChangeParam(SDExponent),
-                KeyW => self.mode = ChangeParam(SABase),
-                KeyS => self.mode = ChangeParam(SAAmplitude),
-                KeyX => self.mode = ChangeParam(SAExponent),
-                KeyE => self.mode = ChangeParam(RABase),
-                KeyD => self.mode = ChangeParam(RAAmplitude),
-                KeyC => self.mode = ChangeParam(RAExponent),
-                KeyR => self.mode = ChangeParam(MDBase),
-                KeyF => self.mode = ChangeParam(MDAmplitude),
-                KeyV => self.mode = ChangeParam(MDExponent),
-                KeyT => self.mode = ChangeParam(DefaultScalingFactor),
-                KeyG => self.mode = ChangeParam(SensorBias1),
-                KeyB => self.mode = ChangeParam(SensorBias2),
-                _ => {}
-            },
-            ChangeParam(cp) => {
+            Normal => {
+                if let Some(cpm) = ChangeParamMode::activate(key) {
+                    self.set_mode(ChangeParam(cpm));
+                }
+            }
+            ChangeParam(cpm) => {
                 if key == KeyCode::Escape {
-                    self.mode = Normal;
+                    self.set_mode(Normal);
                 } else {
-                    cp.apply(self, key);
+                    cpm.apply_mode(self, key);
                     self.set_settings(queue);
                 }
             }
@@ -89,16 +81,16 @@ impl Pipeline {
 }
 
 macro_rules! param_enum {
-    (enum $name:ident { $(
-        $case:ident = $param:ident,
+    (pub enum $name:ident { $(
+        $case:ident = $param:ident = $key:ident,
     )* }) => {
         #[derive(Copy, Clone)]
-        enum $name {
+        pub enum $name {
             $($case,)*
         }
 
         impl $name {
-            fn apply(&self, state: &mut Pipeline, key: KeyCode) {
+            fn apply_mode(&self, state: &mut Pipeline, key: KeyCode) {
                 match self { $(
                     $name::$case => match key {
                         KeyCode::ArrowUp => {
@@ -113,31 +105,46 @@ macro_rules! param_enum {
                         KeyCode::ArrowRight if state.incr_settings.$param > 0.001 => {
                             state.incr_settings.$param /= 10.0;
                         }
-                        _ => {}
+                        KeyCode::$key => {
+                            state.set_mode(Mode::Normal);
+                        }
+                        other => {
+                            if let Some(cpm) = Self::activate(other) {
+                                state.set_mode(Mode::ChangeParam(cpm));
+                            }
+                        }
                     }
                 )* }
+            }
+
+            fn activate(key: KeyCode) -> Option<Self> {
+                match key { $(
+                    KeyCode::$key => Some($name::$case),
+                )*
+                    _ => None
+                }
             }
         }
     }
 }
 
 param_enum!(
-    enum ChangeParamMode {
-        SDBase = sd_base,
-        SDAmplitude = sd_amplitude,
-        SDExponent = sd_exponent,
-        SABase = sa_base,
-        SAAmplitude = sa_amplitude,
-        SAExponent = sa_exponent,
-        RABase = ra_base,
-        RAAmplitude = ra_amplitude,
-        RAExponent = ra_exponent,
-        MDBase = md_base,
-        MDAmplitude = md_amplitude,
-        MDExponent = md_exponent,
-        DefaultScalingFactor = default_scaling_factor,
-        SensorBias1 = sensor_bias_1,
-        SensorBias2 = sensor_bias_2,
+    pub enum ChangeParamMode {
+        SDBase = sd_base = KeyQ,
+        SDAmplitude = sd_amplitude = KeyA,
+        SDExponent = sd_exponent = KeyZ,
+        SABase = sa_base = KeyW,
+        SAAmplitude = sa_amplitude = KeyS,
+        SAExponent = sa_exponent = KeyX,
+        RABase = ra_base = KeyE,
+        RAAmplitude = ra_amplitude = KeyD,
+        RAExponent = ra_exponent = KeyC,
+        MDBase = md_base = KeyR,
+        MDAmplitude = md_amplitude = KeyF,
+        MDExponent = md_exponent = KeyV,
+        DefaultScalingFactor = default_scaling_factor = KeyT,
+        SensorBias1 = sensor_bias_1 = KeyG,
+        SensorBias2 = sensor_bias_2 = KeyB,
     }
 );
 

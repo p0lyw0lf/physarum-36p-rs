@@ -12,14 +12,23 @@ use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use winit::dpi::PhysicalSize;
 
 use crate::constants::HEADER_HEIGHT;
+use crate::pipeline::Mode;
 use crate::shaders::compute_shader::PointSettings;
 
 pub struct Pipeline<'a> {
     brush: TextBrush<FontRef<'a>>,
     section: OwnedSection,
+    /// What portion of the text we should highlight
+    highlighted_index: Option<usize>,
 }
 
-fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings) -> String {
+/// We display 3 rows of text, so fill out the header completely.
+const FONT_SIZE: f32 = HEADER_HEIGHT as f32 / 3.0;
+
+const NORMAL_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0]; // white
+const HIGHLIGHTED_COLOR: [f32; 4] = [0.0, 1.0, 0.0, 1.0]; // green
+
+fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings) -> [String; 15] {
     let PointSettings {
         default_scaling_factor,
         sd_base,
@@ -55,30 +64,53 @@ fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings
         sensor_bias_2: sensor_bias_2_incr,
     } = incr_settings;
 
-    format!(
-        "\
-SD0:{sd_base:>width$.prec$}({sd_base_incr:+.prec$})  \
-SA0:{sa_base:>width$.prec$}({sa_base_incr:+.prec$})  \
-RA0:{ra_base:>width$.prec$}({ra_base_incr:+.prec$})  \
-MD0:{md_base:>width$.prec$}({md_base_incr:+.prec$})  \
-DSF:{default_scaling_factor:>width$.prec$}({default_scaling_factor_incr:+.prec$})
-SDA:{sd_amplitude:>width$.prec$}({sd_amplitude_incr:+.prec$})  \
-SAA:{sa_amplitude:>width$.prec$}({sa_amplitude_incr:+.prec$})  \
-RAA:{ra_amplitude:>width$.prec$}({ra_amplitude_incr:+.prec$})  \
-MDA:{md_amplitude:>width$.prec$}({md_amplitude_incr:+.prec$})  \
-SB1:{sensor_bias_1:>width$.prec$}({sensor_bias_1_incr:+.prec$})
-SDE:{sd_exponent:>width$.prec$}({sd_exponent_incr:+.prec$})  \
-SAE:{sa_exponent:>width$.prec$}({sa_exponent_incr:+.prec$})  \
-RAE:{ra_exponent:>width$.prec$}({ra_exponent_incr:+.prec$})  \
-MDE:{md_exponent:>width$.prec$}({md_exponent_incr:+.prec$})  \
-SB2:{sensor_bias_2:>width$.prec$}({sensor_bias_2_incr:+.prec$})
-",
-        width = 8,
-        prec = 3
-    )
+    const WIDTH: usize = 8;
+    const PREC: usize = 3;
+    [
+        format!("SD0:{sd_base:>WIDTH$.PREC$}({sd_base_incr:+.PREC$})  "),
+        format!("SA0:{sa_base:>WIDTH$.PREC$}({sa_base_incr:+.PREC$})  "),
+        format!("RA0:{ra_base:>WIDTH$.PREC$}({ra_base_incr:+.PREC$})  "),
+        format!("MD0:{md_base:>WIDTH$.PREC$}({md_base_incr:+.PREC$})  "),
+        format!(
+            "DSF:{default_scaling_factor:>WIDTH$.PREC$}({default_scaling_factor_incr:+.PREC$}\n"
+        ),
+        format!("SDA:{sd_amplitude:>WIDTH$.PREC$}({sd_amplitude_incr:+.PREC$})  "),
+        format!("SAA:{sa_amplitude:>WIDTH$.PREC$}({sa_amplitude_incr:+.PREC$})  "),
+        format!("RAA:{ra_amplitude:>WIDTH$.PREC$}({ra_amplitude_incr:+.PREC$})  "),
+        format!("MDA:{md_amplitude:>WIDTH$.PREC$}({md_amplitude_incr:+.PREC$})  "),
+        format!("SB1:{sensor_bias_1:>WIDTH$.PREC$}({sensor_bias_1_incr:+.PREC$}\n"),
+        format!("SDE:{sd_exponent:>WIDTH$.PREC$}({sd_exponent_incr:+.PREC$})  "),
+        format!("SAE:{sa_exponent:>WIDTH$.PREC$}({sa_exponent_incr:+.PREC$})  "),
+        format!("RAE:{ra_exponent:>WIDTH$.PREC$}({ra_exponent_incr:+.PREC$})  "),
+        format!("MDE:{md_exponent:>WIDTH$.PREC$}({md_exponent_incr:+.PREC$})  "),
+        format!("SB2:{sensor_bias_2:>WIDTH$.PREC$}({sensor_bias_2_incr:+.PREC$}\n"),
+    ]
 }
 
-const FONT_SIZE: f32 = 20.0;
+/// Calculate the highlighted_index given the current mode.
+fn mode_to_index(mode: Mode) -> Option<usize> {
+    use crate::pipeline::ChangeParamMode::*;
+    match mode {
+        Mode::ChangeParam(cpm) => Some(match cpm {
+            SDBase => 0,
+            SABase => 1,
+            RABase => 2,
+            MDBase => 3,
+            DefaultScalingFactor => 4,
+            SDAmplitude => 5,
+            SAAmplitude => 6,
+            RAAmplitude => 7,
+            MDAmplitude => 8,
+            SensorBias1 => 9,
+            SDExponent => 10,
+            SAExponent => 11,
+            RAExponent => 12,
+            MDExponent => 13,
+            SensorBias2 => 14,
+        }),
+        _ => None,
+    }
+}
 
 impl Pipeline<'_> {
     pub fn new(
@@ -101,7 +133,11 @@ impl Pipeline<'_> {
 
         let section = Section::default().with_layout(Layout::default()).to_owned();
 
-        Self { brush, section }
+        Self {
+            brush,
+            section,
+            highlighted_index: None,
+        }
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
@@ -113,12 +149,33 @@ impl Pipeline<'_> {
 
     pub fn set_settings(&mut self, base_settings: &PointSettings, incr_settings: &PointSettings) {
         self.section.text.clear();
-        self.section.text.push(
-            OwnedText::default()
-                .with_text(display_settings(base_settings, incr_settings))
-                .with_scale(FONT_SIZE)
-                .with_color([1.0, 1.0, 1.0, 1.0]), // white
+        self.section.text.extend(
+            display_settings(base_settings, incr_settings)
+                .into_iter()
+                .enumerate()
+                .map(|(i, text)| {
+                    OwnedText::default()
+                        .with_text(text)
+                        .with_scale(FONT_SIZE)
+                        .with_color(if Some(i) == self.highlighted_index {
+                            HIGHLIGHTED_COLOR
+                        } else {
+                            NORMAL_COLOR
+                        })
+                }),
         );
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        let prev_highlighted_index = self.highlighted_index;
+        self.highlighted_index = mode_to_index(mode);
+
+        if let Some(i) = prev_highlighted_index {
+            self.section.text[i] = self.section.text[i].clone().with_color(NORMAL_COLOR);
+        }
+        if let Some(i) = self.highlighted_index {
+            self.section.text[i] = self.section.text[i].clone().with_color(HIGHLIGHTED_COLOR);
+        }
     }
 
     pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
