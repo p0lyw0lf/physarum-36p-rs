@@ -55,15 +55,30 @@ fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings
         sensor_bias_2: sensor_bias_2_incr,
     } = incr_settings;
 
-    format!("\
-SD0:{sd_base:>width$.prec$}({sd_base_incr:+.prec$})   SDA:{sd_amplitude:>width$.prec$}({sd_amplitude_incr:+.prec$})   SDE:{sd_exponent:>width$.prec$}({sd_exponent_incr:+.prec$})   DSF:{default_scaling_factor:>width$.prec$}({default_scaling_factor_incr:+.prec$})
-SA0:{sa_base:>width$.prec$}({sa_base_incr:+.prec$})   SAA:{sa_amplitude:>width$.prec$}({sa_amplitude_incr:+.prec$})   SAE:{sa_exponent:>width$.prec$}({sa_exponent_incr:+.prec$})   SB1:{sensor_bias_1:>width$.prec$}({sensor_bias_1_incr:+.prec$})
-RA0:{ra_base:>width$.prec$}({ra_base_incr:+.prec$})   RAA:{ra_amplitude:>width$.prec$}({ra_amplitude_incr:+.prec$})   RAE:{ra_exponent:>width$.prec$}({ra_exponent_incr:+.prec$})   SB2:{sensor_bias_2:>width$.prec$}({sensor_bias_2_incr:+.prec$})
-MD0:{md_base:>width$.prec$}({md_base_incr:+.prec$})   MDA:{md_amplitude:>width$.prec$}({md_amplitude_incr:+.prec$})   MDE:{md_exponent:>width$.prec$}({md_exponent_incr:+.prec$})
-", width=10, prec=3)
+    format!(
+        "\
+SD0:{sd_base:>width$.prec$}({sd_base_incr:+.prec$})  \
+SA0:{sa_base:>width$.prec$}({sa_base_incr:+.prec$})  \
+RA0:{ra_base:>width$.prec$}({ra_base_incr:+.prec$})  \
+MD0:{md_base:>width$.prec$}({md_base_incr:+.prec$})  \
+DSF:{default_scaling_factor:>width$.prec$}({default_scaling_factor_incr:+.prec$})
+SDA:{sd_amplitude:>width$.prec$}({sd_amplitude_incr:+.prec$})  \
+SAA:{sa_amplitude:>width$.prec$}({sa_amplitude_incr:+.prec$})  \
+RAA:{ra_amplitude:>width$.prec$}({ra_amplitude_incr:+.prec$})  \
+MDA:{md_amplitude:>width$.prec$}({md_amplitude_incr:+.prec$})  \
+SB1:{sensor_bias_1:>width$.prec$}({sensor_bias_1_incr:+.prec$})
+SDE:{sd_exponent:>width$.prec$}({sd_exponent_incr:+.prec$})  \
+SAE:{sa_exponent:>width$.prec$}({sa_exponent_incr:+.prec$})  \
+RAE:{ra_exponent:>width$.prec$}({ra_exponent_incr:+.prec$})  \
+MDE:{md_exponent:>width$.prec$}({md_exponent_incr:+.prec$})  \
+SB2:{sensor_bias_2:>width$.prec$}({sensor_bias_2_incr:+.prec$})
+",
+        width = 8,
+        prec = 3
+    )
 }
 
-const FONT_SIZE: f32 = 15.0;
+const FONT_SIZE: f32 = 20.0;
 
 impl Pipeline<'_> {
     pub fn new(
