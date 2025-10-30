@@ -8,15 +8,18 @@ name = "physarum"
 path = "src/main.rs"
 
 [dependencies]
+awedio = { version = "0.5", default-features = false, features = ["cpal", "symphonia-all"] }
 bytemuck = "1.23"
 env_logger = "0.11"
 font-kit = "0.14"
 glam = { version = "0.30", features = ["bytemuck", "encase"] }
+patharg = "0.4.1"
 pollster = "0.4"
 rand = "0.9"
 wgpu = { version = "26.0" }
 wgpu_text = "26.0"
 winit = "0.30"
+xflags = "0.3"
 
 [build-dependencies]
 wgsl_to_wgpu = "0.15"

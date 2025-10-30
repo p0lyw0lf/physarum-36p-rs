@@ -25,7 +25,7 @@ struct State {
 }
 
 impl State {
-    async fn new(window: Arc<Window>) -> State {
+    async fn new(flags: &flags::Main, window: Arc<Window>) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptionsBase {
@@ -60,6 +60,22 @@ impl State {
 
         // Configure surface for the first time
         state.configure_surface();
+
+        // TODO: some way to stop this sound
+        if let Some(file) = &flags.music {
+            let mut backend = awedio::backends::CpalBackend::with_defaults()
+                .expect("error getting audio backend");
+            let mut manager = backend
+                .start(|error| eprintln!("error with cpal output stream: {}", error))
+                .expect("error creating manager");
+            manager.play(
+                awedio::sounds::open_file(file.path_ref().expect(
+                    "I might have to go lower-level (just symphonia) to properly use stdin",
+                ))
+                .expect("TODO proper error handling"),
+            );
+            println!("should be playing music now I think");
+        }
 
         state
     }
@@ -110,8 +126,8 @@ impl State {
     }
 }
 
-#[derive(Default)]
 struct App {
+    flags: flags::Main,
     state: Option<State>,
 }
 
@@ -121,7 +137,7 @@ impl ApplicationHandler for App {
         let window_attributes = Window::default_attributes().with_title("physarum-36p-rs");
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
-        let state = pollster::block_on(State::new(window.clone()));
+        let state = pollster::block_on(State::new(&self.flags, window.clone()));
         self.state = Some(state);
 
         window.request_redraw();
@@ -178,6 +194,16 @@ impl ApplicationHandler for App {
     }
 }
 
+mod flags {
+    use patharg::InputArg;
+
+    xflags::xflags! {
+        cmd main {
+            optional --music file: InputArg
+        }
+    }
+}
+
 fn main() {
     // wgpu uses `log` for all of our logging, so we initialize a logger with the `env_logger` crate.
     //
@@ -199,6 +225,9 @@ fn main() {
     // the background.
     // event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut app = App::default();
+    let mut app = App {
+        flags: flags::Main::from_env_or_exit(),
+        state: None,
+    };
     event_loop.run_app(&mut app).unwrap();
 }
