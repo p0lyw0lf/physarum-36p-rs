@@ -10,6 +10,7 @@ use winit::{
     window::{Fullscreen, Window, WindowId},
 };
 
+mod audio;
 mod constants;
 mod pipeline;
 mod shaders;
@@ -22,6 +23,13 @@ struct State {
     surface: wgpu::Surface<'static>,
     surface_format: wgpu::TextureFormat,
     pipeline: crate::pipeline::Pipeline,
+
+    audio: Option<Audio>,
+}
+
+struct Audio {
+    output_stream: rodio::OutputStream,
+    sink: rodio::Sink,
 }
 
 impl State {
@@ -56,6 +64,7 @@ impl State {
             surface,
             surface_format,
             pipeline,
+            audio: None,
         };
 
         // Configure surface for the first time
@@ -63,17 +72,21 @@ impl State {
 
         // TODO: some way to stop this sound
         if let Some(file) = &flags.music {
-            let mut backend = awedio::backends::CpalBackend::with_defaults()
-                .expect("error getting audio backend");
-            let mut manager = backend
-                .start(|error| eprintln!("error with cpal output stream: {}", error))
-                .expect("error creating manager");
-            manager.play(
-                awedio::sounds::open_file(file.path_ref().expect(
-                    "I might have to go lower-level (just symphonia) to properly use stdin",
-                ))
-                .expect("TODO proper error handling"),
-            );
+            let output_stream = rodio::OutputStreamBuilder::open_default_stream()
+                .expect("could not open default stream");
+            let mixer = output_stream.mixer();
+            let sink = rodio::Sink::connect_new(mixer);
+
+            let file = std::fs::File::open(file).expect("could not open music file");
+            let source = rodio::Decoder::try_from(file).expect("could not decode music file");
+            let source = crate::audio::inspectable_source::InspectableSource::new(Box::new(source));
+
+            sink.append(source);
+
+            state.audio = Some(Audio {
+                output_stream,
+                sink,
+            });
             println!("should be playing music now I think");
         }
 
@@ -195,11 +208,11 @@ impl ApplicationHandler for App {
 }
 
 mod flags {
-    use patharg::InputArg;
+    use std::path::PathBuf;
 
     xflags::xflags! {
         cmd main {
-            optional --music file: InputArg
+            optional --music file: PathBuf
         }
     }
 }
