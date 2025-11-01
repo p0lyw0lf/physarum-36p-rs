@@ -2,8 +2,7 @@ use ringbuffer::RingBuffer;
 use rodio::Sample;
 use rodio::Source;
 
-/// Number of samples in the buffer. Must be a power of 2.
-const SAMPLES: usize = 2048;
+use super::SAMPLES;
 
 pub struct InspectableSource {
     source: Box<dyn Source + Send>,
@@ -84,9 +83,7 @@ impl Source for InspectableSource {
     }
 
     fn channels(&self) -> rodio::ChannelCount {
-        let out = self.source.channels();
-        println!("number of channels: {out}");
-        out
+        self.source.channels()
     }
 
     fn sample_rate(&self) -> rodio::SampleRate {
