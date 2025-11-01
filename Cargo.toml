@@ -12,6 +12,7 @@ bytemuck = "1.23"
 env_logger = "0.11"
 font-kit = "0.14"
 glam = { version = "0.30", features = ["bytemuck", "encase"] }
+microfft = "0.6.0"
 pollster = "0.4"
 rand = "0.9"
 ringbuffer = "0.16"
