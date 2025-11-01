@@ -12,9 +12,9 @@ bytemuck = "1.23"
 env_logger = "0.11"
 font-kit = "0.14"
 glam = { version = "0.30", features = ["bytemuck", "encase"] }
-patharg = "0.4.1"
 pollster = "0.4"
 rand = "0.9"
+ringbuffer = "0.16"
 rodio = { version = "0.21", default-features = false, features = ["playback", "symphonia-mp3"] }
 wgpu = { version = "26.0" }
 wgpu_text = "26.0"
