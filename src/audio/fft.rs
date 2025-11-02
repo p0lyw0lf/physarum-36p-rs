@@ -32,7 +32,6 @@ pub fn fft_buckets(samples: &mut [Sample; SAMPLES], sample_rate: SampleRate) -> 
     spectrum[0].im = 0.0;
 
     let amplitudes: Vec<f32> = spectrum.iter().map(|c| c.norm_sqr().sqrt()).collect();
-    println!("fft amplitudes: {:?}", &amplitudes[0..10]);
     // How much frequency does each bucket produce?
     let resolution = sample_rate as f32 / (SAMPLES / 2) as f32;
 

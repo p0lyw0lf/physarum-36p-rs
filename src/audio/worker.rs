@@ -1,16 +1,14 @@
 use std::sync::{Arc, Mutex, mpsc};
 
-use rodio::Source;
-
 use crate::audio::SAMPLES;
+use crate::audio::collector::Collector;
 use crate::audio::fft::fft_buckets;
-use crate::audio::inspectable_source::InspectableSource;
 
 pub struct Worker {
     /// Waits on this to start the next batch of work
     rx: mpsc::Receiver<()>,
-    /// The source that we are reading from
-    source: Arc<Mutex<InspectableSource>>,
+    /// The samples collector that we are reading from
+    collector: Arc<Mutex<Collector>>,
     /// The canonical most recent batch of frequency bins to display
     bins: Arc<Mutex<Vec<f32>>>,
 }
@@ -19,11 +17,19 @@ impl Worker {
     /// Creates a new worker with a mpsc buffer size of 1. Threads that wish to trigger the worker
     /// simply need to attempt to put a value, and discard if the queue is full.
     pub fn new(
-        source: Arc<Mutex<InspectableSource>>,
+        collector: Arc<Mutex<Collector>>,
     ) -> (mpsc::SyncSender<()>, Arc<Mutex<Vec<f32>>>, Self) {
         let (tx, rx) = mpsc::sync_channel(1);
         let bins = Arc::new(Mutex::new(Vec::new()));
-        (tx, bins.clone(), Self { rx, source, bins })
+        (
+            tx,
+            bins.clone(),
+            Self {
+                rx,
+                collector,
+                bins,
+            },
+        )
     }
 }
 
@@ -48,17 +54,16 @@ impl Worker {
         }
     }
 
-    /// Given an audio source, take a snapshot of the most recent samples & bucket the results into
-    /// pre-determined frequency ranges.
+    /// Given samples collected from an audio source, take a snapshot of the most recent samples
+    /// & bucket the results into pre-determined frequency ranges.
     fn snapshot_fft_buckets(&self) {
         let mut samples = [0.0f32; SAMPLES];
         let sample_rate = {
-            let source = self.source.lock().unwrap();
-            source.snapshot(&mut samples);
-            source.sample_rate()
+            let collector = self.collector.lock().unwrap();
+            collector.snapshot(&mut samples);
+            collector.sample_rate()
         };
         let new_bins = fft_buckets(&mut samples, sample_rate);
-        println!("doing work: {:?}", new_bins);
         {
             let mut bins = self.bins.lock().unwrap();
             *bins = new_bins;

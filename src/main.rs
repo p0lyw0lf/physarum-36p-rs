@@ -83,17 +83,10 @@ impl State {
 
             let file = std::fs::File::open(file).expect("could not open music file");
             let source = rodio::Decoder::try_from(file).expect("could not decode music file");
-            let source = source.buffered();
-            // TODO: this all doesn't work because we need inspectable_source to be the one that
-            // gets polled, but I can't make the types work out currently because sink wants "full"
-            // ownership. Perhaps I just need to have InspectableSource do a .clone() internally?
-            sink.append(source.clone());
+            let (collector, source) = audio::collector::Collector::new(source);
+            sink.append(source);
 
-            let inspectable_source =
-                audio::inspectable_source::InspectableSource::new(Box::new(source));
-            let inspectable_source = Arc::new(Mutex::new(inspectable_source));
-
-            let (tx, bins, worker) = audio::worker::Worker::new(inspectable_source);
+            let (tx, bins, worker) = audio::worker::Worker::new(collector);
             std::thread::spawn(move || worker.work());
 
             state.audio = Some(Audio {
