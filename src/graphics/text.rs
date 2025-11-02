@@ -12,7 +12,7 @@ use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use winit::dpi::PhysicalSize;
 
 use crate::constants::HEADER_HEIGHT;
-use crate::pipeline::Mode;
+use crate::graphics::Mode;
 use crate::shaders::compute_shader::PointSettings;
 
 pub struct Pipeline<'a> {
@@ -89,7 +89,7 @@ fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings
 
 /// Calculate the highlighted_index given the current mode.
 fn mode_to_index(mode: Mode) -> Option<usize> {
-    use crate::pipeline::ChangeParamMode::*;
+    use crate::graphics::ChangeParamMode::*;
     match mode {
         Mode::ChangeParam(cpm) => Some(match cpm {
             SDBase => 0,

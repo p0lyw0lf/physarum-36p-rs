@@ -2,7 +2,6 @@
 
 use std::sync::{Arc, Mutex, mpsc};
 
-use rodio::Source;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
@@ -13,7 +12,7 @@ use winit::{
 
 mod audio;
 mod constants;
-mod pipeline;
+mod graphics;
 mod shaders;
 
 struct State {
@@ -23,7 +22,7 @@ struct State {
     size: winit::dpi::PhysicalSize<u32>,
     surface: wgpu::Surface<'static>,
     surface_format: wgpu::TextureFormat,
-    pipeline: crate::pipeline::Pipeline,
+    pipeline: crate::graphics::Pipeline,
 
     audio: Option<Audio>,
 }
@@ -58,7 +57,7 @@ impl State {
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
 
-        let pipeline = pipeline::Pipeline::new(&device, &queue, size, surface_format);
+        let pipeline = graphics::Pipeline::new(&device, &queue, size, surface_format);
 
         let mut state = State {
             window,
