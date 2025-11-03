@@ -1,5 +1,7 @@
-use std::fs::File;
+use std::ffi::OsStr;
 use std::io::Write;
+use std::path::PathBuf;
+use std::{collections::BTreeSet, fs::File};
 
 use wgsl_to_wgpu::{MatrixVectorTypes, WriteOptions, create_shader_module};
 
@@ -15,14 +17,33 @@ fn write_header(f: &mut impl Write) -> Result<(), std::io::Error> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut mod_file = File::create("src/shaders/mod.rs")?;
     write_header(&mut mod_file)?;
-    // TODO: make this automatically pick up all shaders
-    const SHADERS: &[&str] = &["compute_shader", "render_shader"];
-    for name in SHADERS {
-        let wgsl_file = format!("src/shaders/{name}.wgsl");
-        let wgsl_source = std::fs::read_to_string(&wgsl_file)?;
-        println!("cargo:rerun-if-changed={wgsl_file}");
 
-        let mut rust_file = File::create(format!("src/shaders/{name}.rs"))?;
+    let mut shaders = BTreeSet::<PathBuf>::new();
+    for entry in std::fs::read_dir("src/shaders").expect("could not open shader directory") {
+        let path = entry.expect("could not open shader directory entry").path();
+        if path.extension().and_then(OsStr::to_str) == Some("wgsl") {
+            shaders.insert(path);
+        }
+    }
+
+    for wgsl_file in shaders.into_iter() {
+        let wgsl_source = std::fs::read_to_string(&wgsl_file)?;
+        println!(
+            "cargo:rerun-if-changed={}",
+            wgsl_file
+                .to_str()
+                .expect("could not convert filename to string")
+        );
+
+        let name = wgsl_file
+            .file_prefix()
+            .expect("could not get filename")
+            .to_str()
+            .expect("could not convert filename to string");
+
+        let mut rust_file = wgsl_file.clone();
+        rust_file.set_extension("rs");
+        let mut rust_file = File::create(rust_file).expect("could not open rust file");
         write_header(&mut rust_file)?;
         writeln!(&mut rust_file, "#![allow(dead_code, non_snake_case)]")?;
 

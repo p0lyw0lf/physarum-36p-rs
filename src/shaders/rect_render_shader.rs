@@ -181,7 +181,7 @@ pub fn fs_entry(targets: [Option<wgpu::ColorTargetState>; 1]) -> FragmentEntry<1
         constants: Default::default(),
     }
 }
-pub const SOURCE: &str = include_str!("render_shader.wgsl");
+pub const SOURCE: &str = include_str!("rect_render_shader.wgsl");
 pub fn create_shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
     let source = std::borrow::Cow::Borrowed(SOURCE);
     device.create_shader_module(wgpu::ShaderModuleDescriptor {

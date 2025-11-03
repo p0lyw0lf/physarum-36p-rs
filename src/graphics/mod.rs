@@ -5,6 +5,7 @@ use crate::constants::DEFAULT_INCREMENT_SETTINGS;
 use crate::constants::DEFAULT_POINT_SETTINGS;
 use crate::shaders::compute_shader::PointSettings;
 
+mod fft_visualizer;
 mod physarum;
 mod text;
 

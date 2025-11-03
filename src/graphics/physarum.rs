@@ -4,7 +4,7 @@ use winit::dpi::PhysicalSize;
 use crate::constants::*;
 use crate::shaders::compute_shader;
 use crate::shaders::compute_shader::PointSettings;
-use crate::shaders::render_shader;
+use crate::shaders::rect_render_shader as render_shader;
 
 pub struct Pipeline {
     point_settings_buffer: wgpu::Buffer,
