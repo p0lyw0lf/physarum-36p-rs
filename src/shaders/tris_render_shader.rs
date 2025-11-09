@@ -117,10 +117,16 @@ pub fn vertex_state<'a, const N: usize>(
         },
     }
 }
-pub fn vs_entry(vertex: wgpu::VertexStepMode) -> VertexEntry<1> {
+pub fn vs_entry(
+    static_vertex: wgpu::VertexStepMode,
+    dynamic_vertex: wgpu::VertexStepMode,
+) -> VertexEntry<2> {
     VertexEntry {
         entry_point: ENTRY_VS,
-        buffers: [Vertex::vertex_buffer_layout(vertex)],
+        buffers: [
+            StaticVertex::vertex_buffer_layout(static_vertex),
+            DynamicVertex::vertex_buffer_layout(dynamic_vertex),
+        ],
         constants: Default::default(),
     }
 }
@@ -151,7 +157,7 @@ pub fn fs_entry(targets: [Option<wgpu::ColorTargetState>; 1]) -> FragmentEntry<1
         constants: Default::default(),
     }
 }
-pub const SOURCE: &str = include_str!("line_render_shader.wgsl");
+pub const SOURCE: &str = include_str!("tris_render_shader.wgsl");
 pub fn create_shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
     let source = std::borrow::Cow::Borrowed(SOURCE);
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -165,6 +171,56 @@ pub fn create_pipeline_layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
         bind_group_layouts: &[&bind_groups::BindGroup0::get_bind_group_layout(device)],
         push_constant_ranges: &[],
     })
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
+pub struct DynamicVertex {
+    pub offset: glam::Vec2,
+}
+impl DynamicVertex {
+    pub const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: std::mem::offset_of!(DynamicVertex, offset) as u64,
+        shader_location: 2,
+    }];
+    pub const fn vertex_buffer_layout(
+        step_mode: wgpu::VertexStepMode,
+    ) -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<DynamicVertex>() as u64,
+            step_mode,
+            attributes: &DynamicVertex::VERTEX_ATTRIBUTES,
+        }
+    }
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
+pub struct StaticVertex {
+    pub color: glam::Vec4,
+    pub base_position: glam::Vec4,
+}
+impl StaticVertex {
+    pub const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(StaticVertex, color) as u64,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: std::mem::offset_of!(StaticVertex, base_position) as u64,
+            shader_location: 0,
+        },
+    ];
+    pub const fn vertex_buffer_layout(
+        step_mode: wgpu::VertexStepMode,
+    ) -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<StaticVertex>() as u64,
+            step_mode,
+            attributes: &StaticVertex::VERTEX_ATTRIBUTES,
+        }
+    }
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
@@ -194,39 +250,4 @@ const _: () = assert!(
     std::mem::offset_of!(Uniforms, upper_bound) == 24,
     "offset of Uniforms.upper_bound does not match WGSL"
 );
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
-pub struct Vertex {
-    pub base_position: glam::Vec2,
-    pub offset: glam::Vec2,
-    pub color: glam::Vec4,
-}
-impl Vertex {
-    pub const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = [
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: std::mem::offset_of!(Vertex, base_position) as u64,
-            shader_location: 0,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: std::mem::offset_of!(Vertex, offset) as u64,
-            shader_location: 1,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x4,
-            offset: std::mem::offset_of!(Vertex, color) as u64,
-            shader_location: 2,
-        },
-    ];
-    pub const fn vertex_buffer_layout(
-        step_mode: wgpu::VertexStepMode,
-    ) -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as u64,
-            step_mode,
-            attributes: &Vertex::VERTEX_ATTRIBUTES,
-        }
-    }
-}
 

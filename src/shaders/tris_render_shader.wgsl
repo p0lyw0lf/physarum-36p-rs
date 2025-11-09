@@ -1,12 +1,16 @@
-struct Vertex {
-  // base_position is specified separately from offset because it is expected that base_position
-  // is a little expensive to calculate, but offset is not.
+struct StaticVertex {
+  // base_position is specified separately from offset because it is expected that:
+  // 1. base_position is expensive to calculate and will not change all that often
+  // 2. offset is cheap to calculate and changes every frame
+  @location(1) color: vec4f,
+  @location(0) base_position: vec4f, // zw indices are purely for padding
+}
+
+struct DynamicVertex {
   // TODO: do I want to express this as a matrix instsead? Would likely need to do stuff w/ indexing
   // in that case, it's much more expensive to store mat3x3f per-vertex than it is a single extra
   // vec2f lol
-  @location(0) base_position: vec2f,
-  @location(1) offset: vec2f,
-  @location(2) color: vec4f,
+  @location(2) offset: vec2f,
 }
 
 struct VSOutput {
@@ -15,17 +19,18 @@ struct VSOutput {
 }
 
 @vertex fn vs(
-  vert: Vertex,
+  svert: StaticVertex,
+  dvert: DynamicVertex,
 ) -> VSOutput {
   var vsOut: VSOutput;
   vsOut.position = vec4f(
-    (vert.base_position + vert.offset) * uni.scale + uni.offset, 0.0, 1.0
+    (svert.base_position.xy + dvert.offset) * uni.scale + uni.offset, 0.0, 1.0
   );
-  vsOut.color = vert.color;
+  vsOut.color = svert.color;
   return vsOut;
 }
 
-// The overall camera transform + bounding boxes
+// The overall 2D camera transform + bounding boxes
 struct Uniforms {
   scale: vec2f,
   offset: vec2f,

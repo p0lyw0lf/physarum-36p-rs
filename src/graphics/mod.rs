@@ -22,6 +22,7 @@ pub struct Pipeline {
 
     physarum: physarum::Pipeline,
     text: text::Pipeline<'static>,
+    fft_visualizer: fft_visualizer::Pipeline,
 }
 
 impl Pipeline {
@@ -37,6 +38,7 @@ impl Pipeline {
             incr_settings: DEFAULT_INCREMENT_SETTINGS,
             physarum: physarum::Pipeline::new(device, queue, surface_format),
             text: text::Pipeline::new(device, queue, size, surface_format),
+            fft_visualizer: fft_visualizer::Pipeline::new(device, queue, surface_format),
         };
 
         out.set_settings(queue);
@@ -59,6 +61,7 @@ impl Pipeline {
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
         self.physarum.resize(queue, new_size);
         self.text.resize(queue, new_size);
+        self.fft_visualizer.resize(queue, new_size);
     }
 
     pub fn handle_keypress(&mut self, queue: &wgpu::Queue, key: KeyCode) {
@@ -158,6 +161,7 @@ impl Pipeline {
         surface_format: wgpu::TextureFormat,
     ) {
         self.text.prepare(device, queue);
+        self.fft_visualizer.prepare(queue);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
@@ -204,6 +208,7 @@ impl Pipeline {
 
             self.physarum.render_pass(&mut render_pass);
             self.text.render_pass(&mut render_pass);
+            self.fft_visualizer.render_pass(&mut render_pass);
         }
 
         queue.submit([encoder.finish()]);
