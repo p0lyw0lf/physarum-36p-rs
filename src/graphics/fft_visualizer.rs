@@ -1,6 +1,8 @@
 use winit::dpi::PhysicalSize;
 
-use crate::shaders::tris_render_shader as render_shader;
+use crate::{
+    constants::HEADER_HEIGHT, graphics::camera_2d, shaders::tris_render_shader as render_shader,
+};
 
 pub struct Pipeline {
     render_uniforms_buffer: wgpu::Buffer,
@@ -63,15 +65,15 @@ impl Pipeline {
             0,
             bytemuck::bytes_of(&[
                 render_shader::StaticVertex {
-                    base_position: glam::vec4(0.5, 1.0, 0.0, 0.0),
+                    base_position: glam::vec4(0.5, 0.0, 0.0, 0.0),
                     color: glam::vec4(1.0, 0.0, 0.0, 0.0), // red
                 },
                 render_shader::StaticVertex {
-                    base_position: glam::vec4(0.0, 0.0, 0.0, 0.0),
+                    base_position: glam::vec4(0.0, 1.0, 0.0, 0.0),
                     color: glam::vec4(0.0, 1.0, 0.0, 0.0), // green
                 },
                 render_shader::StaticVertex {
-                    base_position: glam::vec4(1.0, 0.0, 0.0, 0.0),
+                    base_position: glam::vec4(1.0, 1.0, 0.0, 0.0),
                     color: glam::vec4(0.0, 0.0, 1.0, 0.0), // blue
                 },
             ]),
@@ -119,7 +121,23 @@ impl Pipeline {
     }
 
     fn calculate_uniforms(size: PhysicalSize<u32>) -> render_shader::Uniforms {
-        todo!()
+        camera_2d::Uniforms::source_to_screen(
+            size.into(),
+            // TODO: make proper source rect
+            camera_2d::SourceRect {
+                width: 1.0,
+                height: 1.0,
+            },
+            // TODO: figure out where we actually want to render
+            camera_2d::DestinationRect {
+                x: size.width as f32 - HEADER_HEIGHT as f32,
+                y: 0.0,
+                width: HEADER_HEIGHT as f32,
+                height: HEADER_HEIGHT as f32,
+            },
+            camera_2d::Mode::Fit,
+        )
+        .into()
     }
 
     pub fn prepare(&mut self, queue: &wgpu::Queue) {
