@@ -9,7 +9,7 @@ struct Uniforms {
   lower_bound: vec2f,
   upper_bound: vec2f,
 }
-@group(0) @binding(2) var<uniform> uni: Uniforms;
+@group(0) @binding(3) var<uniform> uni: Uniforms;
 
 @vertex fn vs(
     @builtin(vertex_index) vertexIndex: u32,
@@ -28,7 +28,8 @@ struct Uniforms {
 
     var vsOutput: VertexShaderOutput;
     let xy = pos[vertexIndex];
-    vsOutput.position = vec4f(xy * uni.scale + uni.offset, 0.0, 1.0);
+    let dims = textureDimensions(ourTexture);
+    vsOutput.position = vec4f(xy * vec2f(dims) * uni.scale + uni.offset, 0.0, 1.0);
     vsOutput.texcoord = xy;
     return vsOutput;
 }

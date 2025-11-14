@@ -185,7 +185,6 @@ impl Pipeline {
         let line1 = with_color(line1, glam::vec4(0.0, 1.0, 0.0, 1.0)); // green
         let line2 = create_line_vertices(glam::vec2(80.0, 80.0), glam::vec2(90.0, 90.0), 30.0);
         let line2 = with_color(line2, glam::vec4(0.0, 0.0, 1.0, 1.0)); // blue
-        // TODO: this doesn't seem to work, only line1 is rendering for some reason
         let vertex_data: Vec<render_shader::StaticVertex> =
             circle.chain(line1).chain(line2).collect();
 
@@ -252,7 +251,7 @@ impl Pipeline {
                 width: 100.0,
                 height: 100.0,
             },
-            // TODO: figure out where we actually want to render
+            // TODO: made this wide enough to contain full visualizer
             camera_2d::DestinationRect {
                 x: size.width as f32 - HEADER_HEIGHT as f32,
                 y: 0.0,

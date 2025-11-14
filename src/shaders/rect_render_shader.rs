@@ -7,14 +7,14 @@ pub mod bind_groups {
     #[derive(Debug)]
     pub struct BindGroupLayout0<'a> {
         pub uni: wgpu::BufferBinding<'a>,
-        pub ourSampler: &'a wgpu::Sampler,
         pub ourTexture: &'a wgpu::TextureView,
+        pub ourSampler: &'a wgpu::Sampler,
     }
     const LAYOUT_DESCRIPTOR0: wgpu::BindGroupLayoutDescriptor = wgpu::BindGroupLayoutDescriptor {
         label: Some("LayoutDescriptor0"),
         entries: &[
             wgpu::BindGroupLayoutEntry {
-                binding: 2,
+                binding: 3,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -24,19 +24,19 @@ pub mod bind_groups {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
         ],
@@ -51,16 +51,16 @@ pub mod bind_groups {
                 layout: &bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 2,
+                        binding: 3,
                         resource: wgpu::BindingResource::Buffer(bindings.uni),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Sampler(bindings.ourSampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(bindings.ourTexture),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Sampler(bindings.ourSampler),
                     },
                 ],
                 label: Some("BindGroup0"),

@@ -133,21 +133,21 @@ impl Uniforms {
          * following equations will work with either:
          *
          * $$
-         * s = max(w_d / w_s, h_d / h_s)
+         * s = max(d_w / s_w, d_h / s_h)
          * $$
          *
          * Then, we need to set a boundary condition to find the correct offset. In our case, we'd
          * like to center the image, which can be expressed as:
          *
          * $$
-         * t(w_s/2, h_s/2) = (x + w_d/2, u + h_d/2)
+         * t(s_w/2, s_h/2) = (x + d_w/2, u + d_h/2)
          * $$
          *
          * And, solving:
          *
          * $$
-         * => s * w_s/2 + o_x = x + w_d/2, s * h_s / 2 + o_y = y + h_d/2
-         * => o_x = x + 0.5*w_d - s*0.5*w_s, o_y = y + 0.5*h_d - s*0.5*h_s
+         * => s * s_w/2 + o_x = x + d_w/2, s * s_h / 2 + o_y = y + d_h/2
+         * => o_x = x + 0.5*d_w - s*0.5*s_w, o_y = y + 0.5*d_h - s*0.5*s_h
          * $$
          */
         let source_size = glam::vec2(source.width, source.height);
@@ -176,56 +176,37 @@ impl Uniforms {
             destination_offset + 0.5 * (destination_size - overall_scale * source_size);
 
         /*
-         * However! There are a few more transformations that happen in the interim that we have to
-         * account for. The first is the mapping from the "source pixels" to the actual texture
-         * UVs.
+         * However! There is another transformation we have to account for: the automatic
+         * translation from the vertex shader position in clip space to the render shader position
+         * in screen space. This looks something like:
          *
-         * This mapping looks something like:
-         *
-         * 0     w_s       0      1
-         * . ---- . 0      . ---- . 0
-         * | tttt |     => | tttt |
-         * | t    |        | t    |
-         * . ---- . h_s => . ---- . 1
-         *
-         * This is represented by the following transformation:
-         *
-         * $$
-         * pxs_to_uvs: pxs -> uvs
-         * pxs_to_uvs(pxs) = pxs / (w_s, h_s)
-         * $$
-         *
-         * The next transformation turns the source uvs into the destination uvs. This is the only
-         * transformation we actually control as part of the shader.
-         *
-         * $$
-         * uvs_to_uvd: uvs -> uvd
-         * uvs_to_uvd(uvs) = uvs * scale + offset
-         * $$
-         *
-         * Finally, there's the rendering of the destination uvs to the screen. This looks
-         * something like:
-         *
-         * -1      0      1         0            sw_d
+         * -1      0      1         0            r_w
          *  . ---- . ---- . 1       . ---- . ---- . 0
          *  |      |      |         |      |      |
          *  |      |      |         |      |      |
          *  . ---- . ---- . 0   =>  . ---- . ---- .
          *  |      |      |         |      |      |
          *  |      |      |         |      |      |
-         *  . ---- . ---- . -1      . ---- . ---- . sh_d
+         *  . ---- . ---- . -1      . ---- . ---- . r_h
          *
          *
          * $$
-         * uvd_to_pxd: uvd -> pxd
-         * uvd_to_pxd(uvd) => uvd * (sw_d/2, -sh_d/2) + (sw_d/2, sh_d/2)
+         * uv_to_pxd: uv -> pxd
+         * uv_to_pxd(uv) => uv * (r_w/2, -r_h/2) + (r_w/2, r_h/2)
+         * $$
+         *
+         * However, we only have control over the following transformation:
+         *
+         * $$
+         * pxs_to_uv: pxs -> uv
+         * pxs_to_uv(pxs) = ??
          * $$
          *
          * So, we want to satisfy the following equation, solving for the $scale$ and $offset$
-         * vectors that make up $uvs_to_uvd$:
+         * vectors that make up $pxs_to_uv$:
          *
          * $$
-         * t(pxs) = uvd_to_pxd(uvs_to_uvd(pxs_to_uvs(pxs)))
+         * t(pxs) = uv_to_pxd(pxs_to_uv(pxs))
          * $$
          *
          * It's possible to analyze that equation, but it's a bit tedious. Instead, let's model
@@ -233,37 +214,37 @@ impl Uniforms {
          * multiplications:
          *
          * $$
-         *    T * pxs = uvd_to_pxd * uvs_to_uvd * pxs_to_uvs * pxs
-         * => T = uvd_to_pxd * uvs_to_uvd * pxs_to_uvs
-         * => uvd_to_pxd^{-1} * T * pxs_to_uvs^{-1} = uvs_to_uvd
-         * => uvs_to_uvd = [[ sw_d/2,       0, sw_d/2 ],
-         *                  [      0, -sh_d/2, sh_d/2 ],
-         *                  [      0,       0,      1 ]]^{-1}
+         *    T * pxs = uv_to_pxd * pxs_to_uv * pxs
+         * => T = uv_to_pxd * pxs_to_uv
+         * => uv_to_pxd^{-1} * T = pxs_to_uv
+         * => pxs_to_uv = [[ r_w/2,      0, r_w/2 ],
+         *                 [     0, -r_h/2, r_h/2 ],
+         *                 [     0,      0,     1 ]]^{-1}
          *               * [[ s, 0, o_x ],
          *                  [ 0, s, o_y ],
          *                  [ 0, 0,   1 ]]
-         *               * [[ 1/w_s,     0, 0 ]
-         *                  [     0, 1/h_s, 0 ]
-         *                  [     0,     0, 1 ]]^{-1}
-         * => uvs_to_uvd = [[ 2/sw_d,       0, -1 ],
-         *                  [      0, -2/sh_d,  1 ],
-         *                  [      0,       0,  1 ]]
+         * => pxs_to_uv = [[ 2/r_w,      0, -1 ],
+         *                 [     0, -2/r_h,  1 ],
+         *                 [     0,      0,  1 ]]
          *               * [[ s, 0, o_x ],
          *                  [ 0, s, o_y ],
          *                  [ 0, 0,   1 ]]
-         *               * [[ w_s,   0, 0 ]
-         *                  [   0, h_s, 0 ]
-         *                  [   0,   0, 1 ]]
-         * => uvs_to_uvd = [[ 2*s*w_s/sw_d,             0, 2*o_x/sw_d - 1 ]
-         *                  [            0, -2*s*h_s/sh_d, 1 - 2*o_y/sh_d ]
-         *                  [            0,             0,              1 ]]
+         * => pxs_to_uv = [[ 1,  0, 0 ],
+         *                 [ 0, -1, 0 ],
+         *                 [ 0,  0, 1 ]]
+         *              * [[ 2*s/r_w,       0, 2*o_x/r_w - 1 ],
+         *                 [       0, 2*s/r_h, 2*o_y/r_h - 1 ],
+         *                 [       0,       0,             1 ]]
          * $$
          *
-         * For convenience, we'll apply the y-flip at the end.
+         * For convenience, we've factored out the y-flip at the end.
          */
         let screen_size = glam::vec2(screen.width, screen.height);
-        let scale = 2.0 * overall_scale * source_size / screen_size;
+        let scale = 2.0 * overall_scale / screen_size;
         let offset = 2.0 * overall_offset / screen_size - 1.0;
+        let flip = glam::vec2(1.0, -1.0);
+        let scale = scale * flip;
+        let offset = offset * flip;
 
         /*
          * Because we are using a "cover" transform, we need to clip the edges of the texture to the
@@ -277,11 +258,9 @@ impl Uniforms {
         let lower_bound = destination_offset;
         let upper_bound = destination_offset + destination_size;
 
-        // Applying all flips needed for the vertex shader:
-        let flip = glam::vec2(1.0, -1.0);
         Uniforms {
-            scale: scale * flip,
-            offset: offset * flip,
+            scale,
+            offset,
             lower_bound,
             upper_bound,
         }
