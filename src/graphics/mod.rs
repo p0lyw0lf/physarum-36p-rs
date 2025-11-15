@@ -1,6 +1,7 @@
 use winit::dpi::PhysicalSize;
 use winit::keyboard::KeyCode;
 
+use crate::audio::NUM_FREQUENCY_RANGES;
 use crate::constants::DEFAULT_INCREMENT_SETTINGS;
 use crate::constants::DEFAULT_POINT_SETTINGS;
 use crate::shaders::compute_shader::PointSettings;
@@ -160,9 +161,16 @@ impl Pipeline {
         queue: &wgpu::Queue,
         surface_texture: &wgpu::Texture,
         surface_format: wgpu::TextureFormat,
+        bins: Option<&[f32; NUM_FREQUENCY_RANGES]>,
     ) {
         self.text.prepare(device, queue);
-        self.fft_visualizer.prepare(queue);
+        let render_fft = match bins {
+            Some(bins) => {
+                self.fft_visualizer.prepare(queue, bins);
+                true
+            }
+            None => false,
+        };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
@@ -209,7 +217,9 @@ impl Pipeline {
 
             self.physarum.render_pass(&mut render_pass);
             self.text.render_pass(&mut render_pass);
-            self.fft_visualizer.render_pass(&mut render_pass);
+            if render_fft {
+                self.fft_visualizer.render_pass(&mut render_pass);
+            }
         }
 
         queue.submit([encoder.finish()]);

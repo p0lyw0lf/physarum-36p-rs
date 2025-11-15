@@ -189,7 +189,7 @@ impl Pipeline {
         for i in 0..NUM_FREQUENCY_RANGES {
             let x = i as f32;
             // add circle in this bin
-            let center = glam::vec2(60.0 * x + 30.0, 30.0);
+            let center = glam::vec2(60.0 * x + 30.0, 50.0);
             let circle = create_circle_vertices(center, 8.0, 10.0);
             vertex_data.extend(with_color(circle, glam::vec4(1.0, 1.0, 1.0, 1.0))); // white
             // Assign all these vertices to the same bin. 2 triangles per subdivision, 3 vertices
@@ -284,12 +284,13 @@ impl Pipeline {
         .into()
     }
 
-    pub fn prepare(&mut self, queue: &wgpu::Queue) {
+    pub fn prepare(&mut self, queue: &wgpu::Queue, bins: &[f32; NUM_FREQUENCY_RANGES]) {
+        println!("{bins:?}");
         let dynamic_vertex_data: Vec<render_shader::DynamicVertex> = self
             .vertex_to_bin
             .iter()
             .map(|i| render_shader::DynamicVertex {
-                offset: glam::vec2(0.0, 25.0 * f32::sin(*i as f32)),
+                offset: glam::vec2(0.0, -bins[*i as usize] * 0.2),
             })
             .collect();
         queue.write_buffer(

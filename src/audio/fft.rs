@@ -42,7 +42,7 @@ pub fn fft_buckets(samples: &mut [Sample; SAMPLES], sample_rate: SampleRate) -> 
             let index_lo = (r.lo / resolution).floor() as usize;
             let index_hi = (r.hi / resolution).ceil() as usize;
 
-            amplitudes[index_lo..index_hi].iter().sum()
+            amplitudes[index_lo..index_hi].iter().sum::<f32>() / (index_hi - index_lo) as f32
         })
         .collect()
 }

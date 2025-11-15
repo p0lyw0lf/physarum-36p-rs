@@ -10,6 +10,8 @@ use winit::{
     window::{Fullscreen, Window, WindowId},
 };
 
+use crate::audio::NUM_FREQUENCY_RANGES;
+
 mod audio;
 mod constants;
 mod graphics;
@@ -34,6 +36,7 @@ struct Audio {
     // TODO: better naming
     tx: mpsc::SyncSender<()>,
     bins: Arc<Mutex<Vec<f32>>>,
+    last_bins: [f32; NUM_FREQUENCY_RANGES],
 }
 
 impl State {
@@ -94,6 +97,7 @@ impl State {
                 sink,
                 tx,
                 bins,
+                last_bins: [0.0; NUM_FREQUENCY_RANGES],
             });
         }
 
@@ -127,7 +131,7 @@ impl State {
         self.configure_surface();
     }
 
-    fn render(&mut self) {
+    fn render(&mut self, bins: Option<&[f32; NUM_FREQUENCY_RANGES]>) {
         // Create texture view
         let surface_texture = self
             .surface
@@ -139,6 +143,7 @@ impl State {
             &self.queue,
             &surface_texture.texture,
             self.surface_format,
+            bins,
         );
 
         self.window.pre_present_notify();
@@ -172,14 +177,24 @@ impl ApplicationHandler for App {
                 self.close_requested = true;
             }
             WindowEvent::RedrawRequested => {
-                state.render();
+                let bins = state.audio.as_ref().map(|audio| audio.last_bins);
+                state.render(bins.as_ref());
 
-                // Request another redraw so we keep a consistent framerate
+                // Request another redraw after this one so we keep a consistent framerate
                 state.get_window().request_redraw();
 
-                if let Some(audio) = &state.audio {
+                if let Some(audio) = &mut state.audio {
+                    // Request another batch of fft work after this one
                     audio::worker::submit_work(&audio.tx);
-                    println!("{:?}", audio.bins.lock().unwrap());
+                    audio.last_bins = audio
+                        .bins
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(Clone::clone)
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .expect("wrong number of bins");
                 }
             }
             WindowEvent::Resized(size) => {
