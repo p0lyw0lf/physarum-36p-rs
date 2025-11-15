@@ -17,6 +17,7 @@ mod shaders;
 
 struct State {
     window: Arc<Window>,
+
     device: wgpu::Device,
     queue: wgpu::Queue,
     size: winit::dpi::PhysicalSize<u32>,
@@ -147,6 +148,7 @@ impl State {
 
 struct App {
     flags: flags::Main,
+    close_requested: bool,
     state: Option<State>,
 }
 
@@ -162,16 +164,17 @@ impl ApplicationHandler for App {
         window.request_redraw();
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let state = self.state.as_mut().unwrap();
         match event {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
-                event_loop.exit();
+                self.close_requested = true;
             }
             WindowEvent::RedrawRequested => {
                 state.render();
-                // Emits a new redraw requested event.
+
+                // Request another redraw so we keep a consistent framerate
                 state.get_window().request_redraw();
 
                 if let Some(audio) = &state.audio {
@@ -216,6 +219,12 @@ impl ApplicationHandler for App {
             _ => (),
         }
     }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.close_requested {
+            event_loop.exit();
+        }
+    }
 }
 
 mod flags {
@@ -252,6 +261,7 @@ fn main() {
     let mut app = App {
         flags: flags::Main::from_env_or_exit(),
         state: None,
+        close_requested: false,
     };
     event_loop.run_app(&mut app).unwrap();
 }
