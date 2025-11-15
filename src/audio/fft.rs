@@ -22,6 +22,7 @@ const FREQUENCY_RANGES: &[FrequencyRange] = {
 
     &[SUB_BASS, BASS, LOW_MIDS, MIDS, HIGH_MIDS, HIGHS]
 };
+pub const NUM_FREQUENCY_RANGES: usize = FREQUENCY_RANGES.len();
 
 /// Given a list of samples, compute the FFT & bucket the results into pre-determined frequency
 /// ranges.

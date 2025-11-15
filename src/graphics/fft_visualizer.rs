@@ -1,8 +1,11 @@
 use winit::dpi::PhysicalSize;
 
 use crate::{
-    constants::HEADER_HEIGHT, graphics::camera_2d, shaders::tris_render_shader as render_shader,
+    audio::NUM_FREQUENCY_RANGES, constants::HEADER_HEIGHT, graphics::camera_2d,
+    shaders::tris_render_shader as render_shader,
 };
+
+const VISUALIZER_WIDTH: u32 = HEADER_HEIGHT * NUM_FREQUENCY_RANGES as u32;
 
 pub struct Pipeline {
     render_uniforms_buffer: wgpu::Buffer,
@@ -11,6 +14,9 @@ pub struct Pipeline {
     static_vertex_buffer: wgpu::Buffer,
     dynamic_vertex_buffer: wgpu::Buffer,
     num_vertices: usize,
+    // Given a vertex index in 0..num_vertices, maps it to what "bin" in 0..NUM_FREQUENCY_RANGES it
+    // corresponds to, for the purposes of calculating what offset that vertex needs to have.
+    vertex_to_bin: Vec<u32>,
 
     render_pipeline: wgpu::RenderPipeline,
 }
@@ -177,18 +183,33 @@ impl Pipeline {
             cache: Default::default(),
         });
 
-        // Fill in the buffer with dummy data, in a 100x100 box
-        // TODO: make these "real"
-        let circle = create_circle_vertices(glam::vec2(50.0, 50.0), 25.0, 30.0);
-        let circle = with_color(circle, glam::vec4(1.0, 0.0, 0.0, 1.0)); // red
-        let line1 = create_line_vertices(glam::vec2(0.0, 0.0), glam::vec2(75.0, 50.0), 2.0);
-        let line1 = with_color(line1, glam::vec4(0.0, 1.0, 0.0, 1.0)); // green
-        let line2 = create_line_vertices(glam::vec2(80.0, 80.0), glam::vec2(90.0, 90.0), 30.0);
-        let line2 = with_color(line2, glam::vec4(0.0, 0.0, 1.0, 1.0)); // blue
-        let vertex_data: Vec<render_shader::StaticVertex> =
-            circle.chain(line1).chain(line2).collect();
+        // Create the base visualizer geometry
+        let mut vertex_data = Vec::<render_shader::StaticVertex>::new();
+        let mut vertex_to_bin = Vec::<u32>::new();
+        for i in 0..NUM_FREQUENCY_RANGES {
+            let x = i as f32;
+            // add circle in this bin
+            let center = glam::vec2(60.0 * x + 30.0, 30.0);
+            let circle = create_circle_vertices(center, 8.0, 10.0);
+            vertex_data.extend(with_color(circle, glam::vec4(1.0, 1.0, 1.0, 1.0))); // white
+            // Assign all these vertices to the same bin. 2 triangles per subdivision, 3 vertices
+            // per triangle.
+            vertex_to_bin.extend([i as u32; NUM_CIRCLE_SUBDIVISIONS * 2 * 3]);
+            if i > 0 {
+                // add line from previous circle
+                let i = i as u32;
+                let h = i - 1;
+                let prev_center = center - glam::vec2(60.0, 0.0);
+                let line = create_line_vertices(prev_center, center, 1.0);
+                vertex_data.extend(with_color(line, glam::vec4(1.0, 1.0, 1.0, 1.0))); // white
+                // Assign the start point to the previous bin, and the end point to the next bin.
+                // This pattern falls out from how `create_line_vertices` is implemented.
+                vertex_to_bin.extend([h, h, i, i, h, i]);
+            }
+        }
 
         let num_vertices = vertex_data.len();
+        assert_eq!(num_vertices, vertex_to_bin.len());
         let static_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fft static vertex buffer"),
             size: (size_of::<render_shader::StaticVertex>() * num_vertices) as u64,
@@ -230,6 +251,7 @@ impl Pipeline {
             static_vertex_buffer,
             dynamic_vertex_buffer,
             num_vertices,
+            vertex_to_bin,
             render_pipeline,
         }
     }
@@ -246,16 +268,15 @@ impl Pipeline {
     fn calculate_uniforms(size: PhysicalSize<u32>) -> render_shader::Uniforms {
         camera_2d::Uniforms::source_to_screen(
             size.into(),
-            // TODO: make proper source rect
             camera_2d::SourceRect {
-                width: 100.0,
-                height: 100.0,
+                width: VISUALIZER_WIDTH as f32,
+                height: HEADER_HEIGHT as f32,
             },
-            // TODO: made this wide enough to contain full visualizer
+            // pin to the left edge of the header
             camera_2d::DestinationRect {
-                x: size.width as f32 - HEADER_HEIGHT as f32,
+                x: size.width as f32 - VISUALIZER_WIDTH as f32,
                 y: 0.0,
-                width: HEADER_HEIGHT as f32,
+                width: VISUALIZER_WIDTH as f32,
                 height: HEADER_HEIGHT as f32,
             },
             camera_2d::Mode::Fit,
@@ -264,12 +285,13 @@ impl Pipeline {
     }
 
     pub fn prepare(&mut self, queue: &wgpu::Queue) {
-        let dynamic_vertex_data: Vec<render_shader::DynamicVertex> = (0..self.num_vertices)
-            .map(|_| render_shader::DynamicVertex {
-                offset: glam::Vec2::ZERO,
+        let dynamic_vertex_data: Vec<render_shader::DynamicVertex> = self
+            .vertex_to_bin
+            .iter()
+            .map(|i| render_shader::DynamicVertex {
+                offset: glam::vec2(0.0, 25.0 * f32::sin(*i as f32)),
             })
             .collect();
-        // TODO: calculate real memory offsets to affect specific vertices
         queue.write_buffer(
             &self.dynamic_vertex_buffer,
             0,
