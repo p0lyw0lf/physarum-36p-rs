@@ -1,3 +1,4 @@
+use bytemuck::Zeroable;
 use winit::dpi::PhysicalSize;
 use winit::keyboard::KeyCode;
 
@@ -14,13 +15,29 @@ mod text;
 #[derive(Copy, Clone)]
 pub enum Mode {
     Normal,
-    ChangeParam(ChangeParamMode),
+    Base(Param),
+    Fft {
+        /// The parameter we're currently changing, if any
+        param: Option<Param>,
+        /// Which FFT bin we're changing for. MUST be in the range 0..NUM_FREQUENCY_RANGES
+        index: BinIndex,
+    },
+}
+
+#[derive(Clone)]
+struct DisplaySettings {
+    /// The actual settings used for calculation in the simulation.
+    current: PointSettings,
+    /// When a key is pressed, how much to increment a givens setting by.
+    increment: PointSettings,
 }
 
 pub struct Pipeline {
     mode: Mode,
-    base_settings: PointSettings,
-    incr_settings: PointSettings,
+    /// The base point settings, before any scaling from FFT bins are applied.
+    base_settings: DisplaySettings,
+    /// How much to add to each base point, scaled by the amount in each FFT bin.
+    fft_settings: [DisplaySettings; NUM_FREQUENCY_RANGES],
 
     physarum: physarum::Pipeline,
     text: text::Pipeline<'static>,
@@ -36,8 +53,14 @@ impl Pipeline {
     ) -> Self {
         let mut out = Self {
             mode: Mode::Normal,
-            base_settings: DEFAULT_POINT_SETTINGS[0],
-            incr_settings: DEFAULT_INCREMENT_SETTINGS,
+            base_settings: DisplaySettings {
+                current: DEFAULT_POINT_SETTINGS[0],
+                increment: DEFAULT_INCREMENT_SETTINGS,
+            },
+            fft_settings: std::array::repeat(DisplaySettings {
+                current: PointSettings::zeroed(),
+                increment: DEFAULT_INCREMENT_SETTINGS,
+            }),
             physarum: physarum::Pipeline::new(device, queue, surface_format),
             text: text::Pipeline::new(device, queue, size, surface_format),
             fft_visualizer: fft_visualizer::Pipeline::new(device, queue, surface_format),
@@ -49,16 +72,26 @@ impl Pipeline {
         out
     }
 
-    fn set_settings(&mut self, queue: &wgpu::Queue) {
-        self.physarum.set_settings(queue, &self.base_settings);
+    fn set_text_settings(&mut self) {
+        let display_settings = match self.mode {
+            Mode::Normal | Mode::Base(_) => &self.base_settings,
+            Mode::Fft { index, param: _ } => &self.fft_settings[index.0],
+        };
         self.text
-            .set_settings(&self.base_settings, &self.incr_settings);
+            .set_settings(&display_settings.current, &display_settings.increment);
+    }
+
+    fn set_settings(&mut self, queue: &wgpu::Queue) {
+        self.physarum
+            .set_settings(queue, &self.base_settings.current);
+        self.set_text_settings();
     }
 
     fn set_mode(&mut self, queue: &wgpu::Queue, new_mode: Mode) {
         self.mode = new_mode;
         self.text.set_mode(self.mode);
-        self.fft_visualizer.set_mode(queue);
+        self.set_text_settings();
+        self.fft_visualizer.set_mode(queue, self.mode);
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
@@ -69,18 +102,81 @@ impl Pipeline {
 
     pub fn handle_keypress(&mut self, queue: &wgpu::Queue, key: KeyCode) {
         use Mode::*;
+        if key == KeyCode::Escape {
+            self.set_mode(queue, Normal);
+            return;
+        }
+
         match self.mode {
             Normal => {
-                if let Some(cpm) = ChangeParamMode::activate(key) {
-                    self.set_mode(queue, ChangeParam(cpm));
+                if let Some(param) = Param::activate(key) {
+                    self.set_mode(queue, Base(param));
+                    return;
+                }
+                if let Some(index) = BinIndex::activate(key) {
+                    self.set_mode(queue, Fft { param: None, index });
                 }
             }
-            ChangeParam(cpm) => {
-                if key == KeyCode::Escape {
-                    self.set_mode(queue, Normal);
-                } else {
-                    cpm.apply_mode(self, queue, key);
-                    self.set_settings(queue);
+            Base(param) => {
+                if param.apply_to_base(self, queue, key) {
+                    return;
+                }
+                if let Some(new_param) = Param::activate(key) {
+                    if new_param == param {
+                        self.set_mode(queue, Normal);
+                    } else {
+                        self.set_mode(queue, Base(new_param));
+                    }
+                    return;
+                }
+                if let Some(index) = BinIndex::activate(key) {
+                    self.set_mode(
+                        queue,
+                        Fft {
+                            param: Some(param),
+                            index,
+                        },
+                    );
+                }
+            }
+            Fft { param, index } => {
+                if let Some(param) = param
+                    && param.apply_to_fft(self, queue, key, index)
+                {
+                    return;
+                }
+                if let Some(new_param) = Param::activate(key) {
+                    if Some(new_param) == param {
+                        self.set_mode(queue, Fft { param: None, index });
+                    } else {
+                        self.set_mode(
+                            queue,
+                            Fft {
+                                param: Some(new_param),
+                                index,
+                            },
+                        );
+                    }
+                    return;
+                }
+                if let Some(new_index) = BinIndex::activate(key) {
+                    if new_index == index {
+                        self.set_mode(
+                            queue,
+                            match param {
+                                Some(param) => Base(param),
+                                None => Normal,
+                            },
+                        );
+                    } else {
+                        self.set_mode(
+                            queue,
+                            Fft {
+                                param,
+                                index: new_index,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -91,35 +187,65 @@ macro_rules! param_enum {
     (pub enum $name:ident { $(
         $case:ident = $param:ident = $key:ident,
     )* }) => {
-        #[derive(Copy, Clone)]
+        #[derive(Copy, Clone, PartialEq, Eq)]
         pub enum $name {
             $($case,)*
         }
 
         impl $name {
-            fn apply_mode(&self, state: &mut Pipeline, queue: &wgpu::Queue, key: KeyCode) {
+            // Returns whether this has handled the keypress
+            fn apply_to_base(&self, state: &mut Pipeline, queue: &wgpu::Queue, key: KeyCode) -> bool {
                 match self { $(
-                    $name::$case => match key {
-                        KeyCode::ArrowUp => {
-                            state.base_settings.$param += state.incr_settings.$param;
-                        }
-                        KeyCode::ArrowDown => {
-                            state.base_settings.$param -= state.incr_settings.$param;
-                        }
-                        KeyCode::ArrowLeft if state.incr_settings.$param < 100.0 => {
-                            state.incr_settings.$param *= 10.0;
-                        }
-                        KeyCode::ArrowRight if state.incr_settings.$param > 0.001 => {
-                            state.incr_settings.$param /= 10.0;
-                        }
-                        KeyCode::$key => {
-                            state.set_mode(queue, Mode::Normal);
-                        }
-                        other => {
-                            if let Some(cpm) = Self::activate(other) {
-                                state.set_mode(queue, Mode::ChangeParam(cpm));
+                    $name::$case => {
+                        match key {
+                            KeyCode::ArrowUp => {
+                                state.base_settings.current.$param += state.base_settings.increment.$param;
+                                state.set_settings(queue);
                             }
-                        }
+                            KeyCode::ArrowDown => {
+                                state.base_settings.current.$param -= state.base_settings.increment.$param;
+                                state.set_settings(queue);
+                            }
+                            KeyCode::ArrowLeft if state.base_settings.increment.$param < 100.0 => {
+                                state.base_settings.increment.$param *= 10.0;
+                                state.set_settings(queue);
+                            }
+                            KeyCode::ArrowRight if state.base_settings.increment.$param > 0.001 => {
+                                state.base_settings.increment.$param /= 10.0;
+                                state.set_settings(queue);
+                            }
+                            _ => return false,
+                        };
+                        true
+                    }
+                )* }
+            }
+
+            // Returns whether this has handled the keypress
+            fn apply_to_fft(&self, state: &mut Pipeline, queue: &wgpu::Queue, key: KeyCode, index: BinIndex) -> bool {
+                let display_settings = &mut state.fft_settings[index.0];
+                match self { $(
+                    $name::$case => {
+                        match key {
+                            KeyCode::ArrowUp => {
+                                display_settings.current.$param += display_settings.increment.$param;
+                                state.set_settings(queue);
+                            }
+                            KeyCode::ArrowDown => {
+                                display_settings.current.$param -= display_settings.increment.$param;
+                                state.set_settings(queue);
+                            }
+                            KeyCode::ArrowLeft if display_settings.increment.$param < 100.0 => {
+                                display_settings.increment.$param *= 10.0;
+                                state.set_settings(queue);
+                            }
+                            KeyCode::ArrowRight if display_settings.increment.$param > 0.001 => {
+                                display_settings.increment.$param /= 10.0;
+                                state.set_settings(queue);
+                            }
+                            _ => return false,
+                        };
+                        true
                     }
                 )* }
             }
@@ -136,7 +262,9 @@ macro_rules! param_enum {
 }
 
 param_enum!(
-    pub enum ChangeParamMode {
+    // Use the block in the left-hand side of the keyboard, exactly corresponding to where the
+    // parameters will be rendered on the screen.
+    pub enum Param {
         SDBase = sd_base = KeyQ,
         SDAmplitude = sd_amplitude = KeyA,
         SDExponent = sd_exponent = KeyZ,
@@ -152,6 +280,38 @@ param_enum!(
         DefaultScalingFactor = default_scaling_factor = KeyT,
         SensorBias1 = sensor_bias_1 = KeyG,
         SensorBias2 = sensor_bias_2 = KeyB,
+    }
+);
+
+macro_rules! bin_indices {
+    (pub struct $name:ident { $(
+        $index:literal = $key:ident,
+    )* }) => {
+        #[derive(Copy, Clone, PartialEq, Eq)]
+        pub struct $name(pub usize);
+
+        impl $name {
+            fn activate(key: KeyCode) -> Option<Self> {
+                match key { $(
+                    KeyCode::$key => Some(Self($index)),
+                )*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+bin_indices!(
+    // Use the top row to the right of the param block, again corresponding to where the bin will be
+    // displayed on the screen.
+    pub struct BinIndex {
+        0 = KeyY,
+        1 = KeyU,
+        2 = KeyI,
+        3 = KeyO,
+        4 = KeyP,
+        5 = BracketLeft,
     }
 );
 

@@ -1,7 +1,9 @@
 use winit::dpi::PhysicalSize;
 
 use crate::{
-    audio::NUM_FREQUENCY_RANGES, constants::HEADER_HEIGHT, graphics::camera_2d,
+    audio::NUM_FREQUENCY_RANGES,
+    constants::HEADER_HEIGHT,
+    graphics::{Mode, camera_2d},
     shaders::tris_render_shader as render_shader,
 };
 
@@ -299,9 +301,21 @@ impl Pipeline {
         .into()
     }
 
-    pub fn set_mode(&mut self, queue: &wgpu::Queue) {
+    pub fn set_mode(&mut self, queue: &wgpu::Queue, mode: Mode) {
+        let highlighted_index = match mode {
+            Mode::Fft { index, param: _ } => Some(index.0),
+            Mode::Normal | Mode::Base(_) => None,
+        };
         let color_data: Vec<glam::Vec4> = (0..NUM_FREQUENCY_RANGES)
-            .map(|_| /* just make everything white for now */ glam::vec4(1.0, 1.0, 1.0, 1.0))
+            .map(|index| {
+                if Some(index) == highlighted_index {
+                    // red
+                    glam::vec4(1.0, 0.0, 0.0, 1.0)
+                } else {
+                    // white
+                    glam::vec4(1.0, 1.0, 1.0, 1.0)
+                }
+            })
             .collect();
         queue.write_buffer(&self.color_buffer, 0, bytemuck::cast_slice(&color_data[..]));
     }

@@ -13,6 +13,7 @@ use winit::dpi::PhysicalSize;
 
 use crate::constants::HEADER_HEIGHT;
 use crate::graphics::Mode;
+use crate::graphics::Param;
 use crate::shaders::compute_shader::PointSettings;
 
 pub struct Pipeline<'a> {
@@ -20,13 +21,39 @@ pub struct Pipeline<'a> {
     section: OwnedSection,
     /// What portion of the text we should highlight
     highlighted_index: Option<usize>,
+    /// What overall "mode" we are in
+    mode: TextMode,
+}
+
+#[derive(Copy, Clone)]
+enum TextMode {
+    Base,
+    Fft,
 }
 
 /// We display 3 rows of text, so fill out the header completely.
 const FONT_SIZE: f32 = HEADER_HEIGHT as f32 / 3.0;
 
-const NORMAL_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0]; // white
-const HIGHLIGHTED_COLOR: [f32; 4] = [0.0, 1.0, 0.0, 1.0]; // green
+const BASE_NORMAL_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0]; // white
+const BASE_HIGHLIGHT_COLOR: [f32; 4] = [0.0, 1.0, 0.0, 1.0]; // green
+const FFT_NORMAL_COLOR: [f32; 4] = [1.0, 0.0, 0.0, 1.0]; // red
+const FFT_HIGHLIGHT_COLOR: [f32; 4] = [1.0, 1.0, 0.0, 1.0]; // yellow
+
+impl TextMode {
+    fn normal_color(&self) -> [f32; 4] {
+        match self {
+            Self::Base => BASE_NORMAL_COLOR,
+            Self::Fft => FFT_NORMAL_COLOR,
+        }
+    }
+
+    fn highlight_color(&self) -> [f32; 4] {
+        match self {
+            Self::Base => BASE_HIGHLIGHT_COLOR,
+            Self::Fft => FFT_HIGHLIGHT_COLOR,
+        }
+    }
+}
 
 fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings) -> [String; 15] {
     let PointSettings {
@@ -87,27 +114,33 @@ fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings
     ]
 }
 
+/// Calculate the highlighted_index given the current active param.
+fn param_to_index(param: Param) -> usize {
+    use Param::*;
+    match param {
+        SDBase => 0,
+        SABase => 1,
+        RABase => 2,
+        MDBase => 3,
+        DefaultScalingFactor => 4,
+        SDAmplitude => 5,
+        SAAmplitude => 6,
+        RAAmplitude => 7,
+        MDAmplitude => 8,
+        SensorBias1 => 9,
+        SDExponent => 10,
+        SAExponent => 11,
+        RAExponent => 12,
+        MDExponent => 13,
+        SensorBias2 => 14,
+    }
+}
+
 /// Calculate the highlighted_index given the current mode.
 fn mode_to_index(mode: Mode) -> Option<usize> {
-    use crate::graphics::ChangeParamMode::*;
     match mode {
-        Mode::ChangeParam(cpm) => Some(match cpm {
-            SDBase => 0,
-            SABase => 1,
-            RABase => 2,
-            MDBase => 3,
-            DefaultScalingFactor => 4,
-            SDAmplitude => 5,
-            SAAmplitude => 6,
-            RAAmplitude => 7,
-            MDAmplitude => 8,
-            SensorBias1 => 9,
-            SDExponent => 10,
-            SAExponent => 11,
-            RAExponent => 12,
-            MDExponent => 13,
-            SensorBias2 => 14,
-        }),
+        Mode::Base(param) => Some(param_to_index(param)),
+        Mode::Fft { param, index: _ } => param.map(param_to_index),
         _ => None,
     }
 }
@@ -137,6 +170,7 @@ impl Pipeline<'_> {
             brush,
             section,
             highlighted_index: None,
+            mode: TextMode::Fft,
         }
     }
 
@@ -148,6 +182,7 @@ impl Pipeline<'_> {
     }
 
     pub fn set_settings(&mut self, base_settings: &PointSettings, incr_settings: &PointSettings) {
+        let mode = self.mode;
         self.section.text.clear();
         self.section.text.extend(
             display_settings(base_settings, incr_settings)
@@ -158,9 +193,9 @@ impl Pipeline<'_> {
                         .with_text(text)
                         .with_scale(FONT_SIZE)
                         .with_color(if Some(i) == self.highlighted_index {
-                            HIGHLIGHTED_COLOR
+                            mode.highlight_color()
                         } else {
-                            NORMAL_COLOR
+                            mode.normal_color()
                         })
                 }),
         );
@@ -170,11 +205,17 @@ impl Pipeline<'_> {
         let prev_highlighted_index = self.highlighted_index;
         self.highlighted_index = mode_to_index(mode);
 
+        self.mode = mode.into();
+
         if let Some(i) = prev_highlighted_index {
-            self.section.text[i] = self.section.text[i].clone().with_color(NORMAL_COLOR);
+            self.section.text[i] = self.section.text[i]
+                .clone()
+                .with_color(self.mode.normal_color());
         }
         if let Some(i) = self.highlighted_index {
-            self.section.text[i] = self.section.text[i].clone().with_color(HIGHLIGHTED_COLOR);
+            self.section.text[i] = self.section.text[i]
+                .clone()
+                .with_color(self.mode.highlight_color());
         }
     }
 
@@ -186,5 +227,14 @@ impl Pipeline<'_> {
 
     pub fn render_pass<'pass>(&'pass self, render_pass: &mut wgpu::RenderPass<'pass>) {
         self.brush.draw(render_pass);
+    }
+}
+
+impl From<Mode> for TextMode {
+    fn from(mode: Mode) -> Self {
+        match mode {
+            Mode::Normal | Mode::Base(_) => Self::Base,
+            Mode::Fft { .. } => Self::Fft,
+        }
     }
 }
