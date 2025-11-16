@@ -6,20 +6,44 @@ pub mod bind_groups {
     pub struct BindGroup0(wgpu::BindGroup);
     #[derive(Debug)]
     pub struct BindGroupLayout0<'a> {
+        pub colors: wgpu::BufferBinding<'a>,
+        pub offsets: wgpu::BufferBinding<'a>,
         pub uni: wgpu::BufferBinding<'a>,
     }
     const LAYOUT_DESCRIPTOR0: wgpu::BindGroupLayoutDescriptor = wgpu::BindGroupLayoutDescriptor {
         label: Some("LayoutDescriptor0"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
     };
     impl BindGroup0 {
         pub fn get_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -29,10 +53,20 @@ pub mod bind_groups {
             let bind_group_layout = device.create_bind_group_layout(&LAYOUT_DESCRIPTOR0);
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(bindings.uni),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(bindings.colors),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Buffer(bindings.offsets),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(bindings.uni),
+                    },
+                ],
                 label: Some("BindGroup0"),
             });
             Self(bind_group)
@@ -117,16 +151,10 @@ pub fn vertex_state<'a, const N: usize>(
         },
     }
 }
-pub fn vs_entry(
-    static_vertex: wgpu::VertexStepMode,
-    dynamic_vertex: wgpu::VertexStepMode,
-) -> VertexEntry<2> {
+pub fn vs_entry(vertex: wgpu::VertexStepMode) -> VertexEntry<1> {
     VertexEntry {
         entry_point: ENTRY_VS,
-        buffers: [
-            StaticVertex::vertex_buffer_layout(static_vertex),
-            DynamicVertex::vertex_buffer_layout(dynamic_vertex),
-        ],
+        buffers: [Vertex::vertex_buffer_layout(vertex)],
         constants: Default::default(),
     }
 }
@@ -174,56 +202,6 @@ pub fn create_pipeline_layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
-pub struct DynamicVertex {
-    pub offset: glam::Vec2,
-}
-impl DynamicVertex {
-    pub const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x2,
-        offset: std::mem::offset_of!(DynamicVertex, offset) as u64,
-        shader_location: 2,
-    }];
-    pub const fn vertex_buffer_layout(
-        step_mode: wgpu::VertexStepMode,
-    ) -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<DynamicVertex>() as u64,
-            step_mode,
-            attributes: &DynamicVertex::VERTEX_ATTRIBUTES,
-        }
-    }
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
-pub struct StaticVertex {
-    pub color: glam::Vec4,
-    pub base_position: glam::Vec4,
-}
-impl StaticVertex {
-    pub const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x4,
-            offset: std::mem::offset_of!(StaticVertex, color) as u64,
-            shader_location: 1,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x4,
-            offset: std::mem::offset_of!(StaticVertex, base_position) as u64,
-            shader_location: 0,
-        },
-    ];
-    pub const fn vertex_buffer_layout(
-        step_mode: wgpu::VertexStepMode,
-    ) -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<StaticVertex>() as u64,
-            step_mode,
-            attributes: &StaticVertex::VERTEX_ATTRIBUTES,
-        }
-    }
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
 pub struct Uniforms {
     pub scale: glam::Vec2,
     pub offset: glam::Vec2,
@@ -250,4 +228,39 @@ const _: () = assert!(
     std::mem::offset_of!(Uniforms, upper_bound) == 24,
     "offset of Uniforms.upper_bound does not match WGSL"
 );
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, bytemuck :: Pod, bytemuck :: Zeroable)]
+pub struct Vertex {
+    pub base_position: glam::Vec2,
+    pub color_index: u32,
+    pub offset_index: u32,
+}
+impl Vertex {
+    pub const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x2,
+            offset: std::mem::offset_of!(Vertex, base_position) as u64,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: std::mem::offset_of!(Vertex, color_index) as u64,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: std::mem::offset_of!(Vertex, offset_index) as u64,
+            shader_location: 2,
+        },
+    ];
+    pub const fn vertex_buffer_layout(
+        step_mode: wgpu::VertexStepMode,
+    ) -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode,
+            attributes: &Vertex::VERTEX_ATTRIBUTES,
+        }
+    }
+}
 

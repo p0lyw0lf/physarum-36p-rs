@@ -1,17 +1,17 @@
-struct StaticVertex {
-  // base_position is specified separately from offset because it is expected that:
-  // 1. base_position is expensive to calculate and will not change all that often
-  // 2. offset is cheap to calculate and changes every frame
-  @location(1) color: vec4f,
-  @location(0) base_position: vec4f, // zw indices are purely for padding
+struct Vertex {
+  // We group vertices into "shapes", where a shape overall has the same color, and different parts
+  // of the shape can have differing, dynamically-calculated offsets. Because many vertices in a
+  // given shape will share the same parameters, we have the vertices index into an array containing
+  // those parameters instead of storing inline.
+  @location(0) base_position: vec2f,
+  @location(1) color_index: u32,
+  @location(2) offset_index: u32,
 }
 
-struct DynamicVertex {
-  // TODO: do I want to express this as a matrix instsead? Would likely need to do stuff w/ indexing
-  // in that case, it's much more expensive to store mat3x3f per-vertex than it is a single extra
-  // vec2f lol
-  @location(2) offset: vec2f,
-}
+// The groups of colors
+@group(0) @binding(1) var<storage, read> colors: array<vec4f>;
+// The groups of dynamic offsets
+@group(0) @binding(2) var<storage, read> offsets: array<vec2f>;
 
 struct VSOutput {
   @builtin(position) position: vec4f,
@@ -19,18 +19,18 @@ struct VSOutput {
 }
 
 @vertex fn vs(
-  svert: StaticVertex,
-  dvert: DynamicVertex,
+  vertex: Vertex
 ) -> VSOutput {
+  let position = vertex.base_position + offsets[vertex.offset_index];
   var vsOut: VSOutput;
   vsOut.position = vec4f(
-    (svert.base_position.xy + dvert.offset) * uni.scale + uni.offset, 0.0, 1.0
+    position * uni.scale + uni.offset, 0.0, 1.0
   );
-  vsOut.color = svert.color;
+  vsOut.color = colors[vertex.color_index];
   return vsOut;
 }
 
-// The overall 2D camera transform + bounding boxes
+// The overall 2D camera transform + bounding boxes. Only expected to change on screen resize.
 struct Uniforms {
   scale: vec2f,
   offset: vec2f,

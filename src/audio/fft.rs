@@ -41,6 +41,11 @@ pub fn fft_buckets(samples: &mut [Sample; SAMPLES], sample_rate: SampleRate) -> 
         .map(|r| {
             let index_lo = (r.lo / resolution).floor() as usize;
             let index_hi = (r.hi / resolution).ceil() as usize;
+            // TODO: I got an index-out-of-range crash here somehow. Apparently the sample_rate
+            // must have been off somehow?? (like way too low). Doing this for safety, doesn't
+            // affect it when it's running normally.
+            let index_lo = index_lo.clamp(0, amplitudes.len() - 1);
+            let index_hi = index_hi.clamp(0, amplitudes.len() - 1);
 
             amplitudes[index_lo..index_hi].iter().sum::<f32>() / (index_hi - index_lo) as f32
         })

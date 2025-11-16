@@ -44,7 +44,7 @@ impl Pipeline {
         };
 
         out.set_settings(queue);
-        out.set_mode(Mode::Normal);
+        out.set_mode(queue, Mode::Normal);
 
         out
     }
@@ -55,9 +55,10 @@ impl Pipeline {
             .set_settings(&self.base_settings, &self.incr_settings);
     }
 
-    fn set_mode(&mut self, new_mode: Mode) {
+    fn set_mode(&mut self, queue: &wgpu::Queue, new_mode: Mode) {
         self.mode = new_mode;
         self.text.set_mode(self.mode);
+        self.fft_visualizer.set_mode(queue);
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
@@ -71,14 +72,14 @@ impl Pipeline {
         match self.mode {
             Normal => {
                 if let Some(cpm) = ChangeParamMode::activate(key) {
-                    self.set_mode(ChangeParam(cpm));
+                    self.set_mode(queue, ChangeParam(cpm));
                 }
             }
             ChangeParam(cpm) => {
                 if key == KeyCode::Escape {
-                    self.set_mode(Normal);
+                    self.set_mode(queue, Normal);
                 } else {
-                    cpm.apply_mode(self, key);
+                    cpm.apply_mode(self, queue, key);
                     self.set_settings(queue);
                 }
             }
@@ -96,7 +97,7 @@ macro_rules! param_enum {
         }
 
         impl $name {
-            fn apply_mode(&self, state: &mut Pipeline, key: KeyCode) {
+            fn apply_mode(&self, state: &mut Pipeline, queue: &wgpu::Queue, key: KeyCode) {
                 match self { $(
                     $name::$case => match key {
                         KeyCode::ArrowUp => {
@@ -112,11 +113,11 @@ macro_rules! param_enum {
                             state.incr_settings.$param /= 10.0;
                         }
                         KeyCode::$key => {
-                            state.set_mode(Mode::Normal);
+                            state.set_mode(queue, Mode::Normal);
                         }
                         other => {
                             if let Some(cpm) = Self::activate(other) {
-                                state.set_mode(Mode::ChangeParam(cpm));
+                                state.set_mode(queue, Mode::ChangeParam(cpm));
                             }
                         }
                     }

@@ -10,87 +10,109 @@ const VISUALIZER_WIDTH: u32 = HEADER_HEIGHT * NUM_FREQUENCY_RANGES as u32;
 pub struct Pipeline {
     render_uniforms_buffer: wgpu::Buffer,
 
-    render_bind_group: render_shader::bind_groups::BindGroup0,
-    static_vertex_buffer: wgpu::Buffer,
-    dynamic_vertex_buffer: wgpu::Buffer,
+    // The geometry to draw. It contains things type render_shader::Vertex, and has length
+    // num_vertices.
+    vertex_buffer: wgpu::Buffer,
     num_vertices: usize,
-    // Given a vertex index in 0..num_vertices, maps it to what "bin" in 0..NUM_FREQUENCY_RANGES it
-    // corresponds to, for the purposes of calculating what offset that vertex needs to have.
-    vertex_to_bin: Vec<u32>,
+    // The colors to apply to the geometry. It contains things type glam::Vec4, and has length
+    // NUM_FREQUENCY_RANGES.
+    color_buffer: wgpu::Buffer,
+    // The offsets to apply to the geometry. It contains things type glam::Vec2, and has length
+    // NUM_FREQUENCY_RANGES.
+    offset_buffer: wgpu::Buffer,
 
+    render_bind_group: render_shader::bind_groups::BindGroup0,
     render_pipeline: wgpu::RenderPipeline,
 }
 
 const NUM_CIRCLE_SUBDIVISIONS: usize = 24;
 
-#[repr(C)]
+#[derive(Debug)]
 struct Triangle {
     p0: glam::Vec2,
     p1: glam::Vec2,
     p2: glam::Vec2,
 }
 
-const _: () = assert!(
-    std::mem::size_of::<Triangle>() == 24,
-    "Triangle is not packed"
-);
-const _: () = assert!(
-    std::mem::offset_of!(Triangle, p0) == 0,
-    "Triangle.p0 has wrong offset"
-);
-const _: () = assert!(
-    std::mem::offset_of!(Triangle, p1) == 8,
-    "Triangle.p1 has wrong offset"
-);
-const _: () = assert!(
-    std::mem::offset_of!(Triangle, p2) == 16,
-    "Triangle.p2 has wrong offset"
-);
+impl IntoIterator for Triangle {
+    type Item = glam::Vec2;
+    type IntoIter = std::array::IntoIter<Self::Item, 3>;
+    fn into_iter(self) -> Self::IntoIter {
+        let Triangle { p0, p1, p2 } = self;
+        [p0, p1, p2].into_iter()
+    }
+}
 
-fn create_circle_vertices(
-    center: glam::Vec2,
-    inner_radius: f32,
-    outer_radius: f32,
-) -> impl Iterator<Item = Triangle> {
+trait ToVertices {
+    type ShapeIndex;
+    fn to_vertices(self, index: Self::ShapeIndex) -> impl Iterator<Item = render_shader::Vertex>;
+}
+
+struct Circle([Triangle; NUM_CIRCLE_SUBDIVISIONS * 2]);
+
+fn make_circle(center: glam::Vec2, inner_radius: f32, outer_radius: f32) -> Circle {
     const RADS_PER_SUBDIVISION: f32 = std::f32::consts::TAU / (NUM_CIRCLE_SUBDIVISIONS as f32);
 
     // 2 triangles per subdivision
     //
-    // 0--1 4
+    // 0--1 4 outer_radius
     // | / /|
     // |/ / |
-    // 2 3--5
-    (0..NUM_CIRCLE_SUBDIVISIONS).flat_map(move |i| {
-        let i = i as f32;
-        let angle0 = i * RADS_PER_SUBDIVISION;
-        let angle1 = (i + 1.0) * RADS_PER_SUBDIVISION;
+    // 2 3--5 inner_radius
+    let triangles = (0..NUM_CIRCLE_SUBDIVISIONS)
+        .flat_map(move |i| {
+            let i = i as f32;
+            let angle0 = i * RADS_PER_SUBDIVISION;
+            let angle1 = (i + 1.0) * RADS_PER_SUBDIVISION;
 
-        let v0 = glam::vec2(f32::cos(angle0), f32::sin(angle0));
-        let v1 = glam::vec2(f32::cos(angle1), f32::sin(angle1));
+            let v0 = glam::vec2(f32::cos(angle0), f32::sin(angle0));
+            let v1 = glam::vec2(f32::cos(angle1), f32::sin(angle1));
 
-        [
-            // first triangle
-            Triangle {
-                p0: v0 * outer_radius + center,
-                p1: v1 * outer_radius + center,
-                p2: v0 * inner_radius + center,
-            },
-            // second triangle
-            Triangle {
-                p0: v0 * inner_radius + center,
-                p1: v1 * outer_radius + center,
-                p2: v1 * inner_radius + center,
-            },
-        ]
-    })
+            [
+                // first triangle
+                Triangle {
+                    p0: v0 * outer_radius + center,
+                    p1: v1 * outer_radius + center,
+                    p2: v0 * inner_radius + center,
+                },
+                // second triangle
+                Triangle {
+                    p0: v0 * inner_radius + center,
+                    p1: v1 * outer_radius + center,
+                    p2: v1 * inner_radius + center,
+                },
+            ]
+        })
+        .collect::<Vec<_>>();
+
+    Circle(
+        triangles
+            .try_into()
+            .expect("circle generated wrong number of triangles"),
+    )
 }
 
-fn create_line_vertices(
-    start: glam::Vec2,
-    end: glam::Vec2,
-    width: f32,
-) -> impl Iterator<Item = Triangle> {
-    /*        p0                  p1
+impl ToVertices for Circle {
+    type ShapeIndex = u32;
+    fn to_vertices(self, index: Self::ShapeIndex) -> impl Iterator<Item = render_shader::Vertex> {
+        self.0
+            .into_iter()
+            .flat_map(Triangle::into_iter)
+            .map(move |vertex| render_shader::Vertex {
+                base_position: vertex,
+                color_index: index,
+                offset_index: index,
+            })
+    }
+}
+
+struct Line {
+    start: Triangle,
+    end: Triangle,
+}
+
+fn make_line(start: glam::Vec2, end: glam::Vec2, width: f32) -> Line {
+    /*        p0                  p3
      *         +------------------+
      *         | \__              |
      *         |    \___          |
@@ -98,7 +120,7 @@ fn create_line_vertices(
      *         |            \___  |
      *         |                \_|
      *         +------------------+
-     *        p3                 p2
+     *        p1                 p2
      */
     let direction = end - start;
     let orthogonal = glam::vec2(direction.y, -direction.x);
@@ -106,44 +128,36 @@ fn create_line_vertices(
     let offset = orthonormal / 2.0;
 
     let p0 = start + offset;
-    let p1 = end + offset;
+    let p1 = start - offset;
     let p2 = end - offset;
-    let p3 = start - offset;
+    let p3 = end + offset;
 
-    [
-        // first triangle
-        Triangle { p0: p3, p1: p0, p2 },
-        // second triangle
-        Triangle {
+    Line {
+        start: Triangle { p0: p1, p1: p0, p2 },
+        end: Triangle {
             p0: p2,
             p1: p0,
-            p2: p1,
+            p2: p3,
         },
-    ]
-    .into_iter()
+    }
 }
 
-fn with_color(
-    vertices: impl Iterator<Item = Triangle>,
-    color: glam::Vec4,
-) -> impl Iterator<Item = render_shader::StaticVertex> {
-    let xy_to_pos = |xy: glam::Vec2| -> glam::Vec4 { glam::vec4(xy.x, xy.y, 0.0, 1.0) };
-    vertices.flat_map(move |tri| {
-        [
-            render_shader::StaticVertex {
-                base_position: xy_to_pos(tri.p0),
-                color,
-            },
-            render_shader::StaticVertex {
-                base_position: xy_to_pos(tri.p1),
-                color,
-            },
-            render_shader::StaticVertex {
-                base_position: xy_to_pos(tri.p2),
-                color,
-            },
-        ]
-    })
+impl ToVertices for Line {
+    /// (start_index, end_index)
+    type ShapeIndex = (u32, u32);
+    fn to_vertices(self, (a, b): Self::ShapeIndex) -> impl Iterator<Item = render_shader::Vertex> {
+        let indices = [a, a, b, b, a, b].into_iter();
+        let vertices = [self.start, self.end]
+            .into_iter()
+            .flat_map(Triangle::into_iter);
+        vertices
+            .zip(indices)
+            .map(|(vertex, index)| render_shader::Vertex {
+                base_position: vertex,
+                color_index: index,
+                offset_index: index,
+            })
+    }
 }
 
 impl Pipeline {
@@ -159,10 +173,7 @@ impl Pipeline {
             layout: Some(&render_pipeline_layout),
             vertex: render_shader::vertex_state(
                 &render_shader_module,
-                &render_shader::vs_entry(
-                    wgpu::VertexStepMode::Vertex,
-                    wgpu::VertexStepMode::Vertex,
-                ),
+                &render_shader::vs_entry(wgpu::VertexStepMode::Vertex),
             ),
             fragment: Some(render_shader::fragment_state(
                 &render_shader_module,
@@ -184,48 +195,50 @@ impl Pipeline {
         });
 
         // Create the base visualizer geometry
-        let mut vertex_data = Vec::<render_shader::StaticVertex>::new();
-        let mut vertex_to_bin = Vec::<u32>::new();
+        let mut vertex_data = Vec::<render_shader::Vertex>::new();
         for i in 0..NUM_FREQUENCY_RANGES {
+            const H: f32 = HEADER_HEIGHT as f32;
+
+            let i = i as u32;
             let x = i as f32;
+
             // add circle in this bin
-            let center = glam::vec2(60.0 * x + 30.0, 50.0);
-            let circle = create_circle_vertices(center, 8.0, 10.0);
-            vertex_data.extend(with_color(circle, glam::vec4(1.0, 1.0, 1.0, 1.0))); // white
-            // Assign all these vertices to the same bin. 2 triangles per subdivision, 3 vertices
-            // per triangle.
-            vertex_to_bin.extend([i as u32; NUM_CIRCLE_SUBDIVISIONS * 2 * 3]);
+            let center = glam::vec2(H * x + H / 2.0, H - 10.0);
+            let circle = make_circle(center, 8.0, 10.0);
+            vertex_data.extend(circle.to_vertices(i));
+
             if i > 0 {
                 // add line from previous circle
-                let i = i as u32;
                 let h = i - 1;
-                let prev_center = center - glam::vec2(60.0, 0.0);
-                let line = create_line_vertices(prev_center, center, 1.0);
-                vertex_data.extend(with_color(line, glam::vec4(1.0, 1.0, 1.0, 1.0))); // white
-                // Assign the start point to the previous bin, and the end point to the next bin.
-                // This pattern falls out from how `create_line_vertices` is implemented.
-                vertex_to_bin.extend([h, h, i, i, h, i]);
+                let prev_center = center - glam::vec2(H, 0.0);
+                let line = make_line(prev_center, center, 1.0);
+                vertex_data.extend(line.to_vertices((h, i)));
             }
         }
 
         let num_vertices = vertex_data.len();
-        assert_eq!(num_vertices, vertex_to_bin.len());
-        let static_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fft static vertex buffer"),
-            size: (size_of::<render_shader::StaticVertex>() * num_vertices) as u64,
+            size: (size_of::<render_shader::Vertex>() * num_vertices) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(
-            &static_vertex_buffer,
-            0,
-            bytemuck::cast_slice(&vertex_data[..]),
-        );
+        queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data[..]));
 
-        let dynamic_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fft dynamic vertex buffer"),
-            size: (size_of::<render_shader::DynamicVertex>() * num_vertices) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        // The previous geometry created exactly `NUM_FREQUENCY_RANGES` indexes that we need to
+        // fill with colors and offsets.
+        let color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fft color buffer"),
+            size: (size_of::<glam::Vec4>() * NUM_FREQUENCY_RANGES) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // filled in during each set_mode()
+
+        let offset_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fft offset buffer"),
+            size: (size_of::<glam::Vec2>() * NUM_FREQUENCY_RANGES) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         // filled in during each prepare()
@@ -236,22 +249,24 @@ impl Pipeline {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // Filled in when screen is resized
+        // Filled in during each resize()
 
         let render_bind_group = render_shader::bind_groups::BindGroup0::from_bindings(
             device,
             render_shader::bind_groups::BindGroupLayout0 {
+                colors: color_buffer.as_entire_buffer_binding(),
+                offsets: offset_buffer.as_entire_buffer_binding(),
                 uni: render_uniforms_buffer.as_entire_buffer_binding(),
             },
         );
 
         Self {
             render_uniforms_buffer,
-            render_bind_group,
-            static_vertex_buffer,
-            dynamic_vertex_buffer,
+            vertex_buffer,
             num_vertices,
-            vertex_to_bin,
+            color_buffer,
+            offset_buffer,
+            render_bind_group,
             render_pipeline,
         }
     }
@@ -284,27 +299,28 @@ impl Pipeline {
         .into()
     }
 
+    pub fn set_mode(&mut self, queue: &wgpu::Queue) {
+        let color_data: Vec<glam::Vec4> = (0..NUM_FREQUENCY_RANGES)
+            .map(|_| /* just make everything white for now */ glam::vec4(1.0, 1.0, 1.0, 1.0))
+            .collect();
+        queue.write_buffer(&self.color_buffer, 0, bytemuck::cast_slice(&color_data[..]));
+    }
+
     pub fn prepare(&mut self, queue: &wgpu::Queue, bins: &[f32; NUM_FREQUENCY_RANGES]) {
         println!("{bins:?}");
-        let dynamic_vertex_data: Vec<render_shader::DynamicVertex> = self
-            .vertex_to_bin
-            .iter()
-            .map(|i| render_shader::DynamicVertex {
-                offset: glam::vec2(0.0, -bins[*i as usize] * 0.2),
-            })
-            .collect();
+        let offset_data: Vec<glam::Vec2> =
+            bins.iter().map(|v| glam::vec2(0.0, *v * -0.2)).collect();
         queue.write_buffer(
-            &self.dynamic_vertex_buffer,
+            &self.offset_buffer,
             0,
-            bytemuck::cast_slice(&dynamic_vertex_data[..]),
+            bytemuck::cast_slice(&offset_data[..]),
         );
     }
 
     pub fn render_pass(&self, render_pass: &mut wgpu::RenderPass) {
         render_pass.set_pipeline(&self.render_pipeline);
         render_shader::set_bind_groups(render_pass, &self.render_bind_group);
-        render_pass.set_vertex_buffer(0, self.static_vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, self.dynamic_vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         render_pass.draw(0..self.num_vertices as u32, 0..1);
     }
