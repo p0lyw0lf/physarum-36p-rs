@@ -2,10 +2,7 @@
 
 use std::sync::{Arc, Mutex, mpsc};
 
-use rodio::{
-    DeviceTrait,
-    cpal::{Host, traits::HostTrait},
-};
+use rodio::{DeviceTrait, cpal::traits::HostTrait};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},

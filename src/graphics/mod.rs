@@ -81,9 +81,9 @@ impl Pipeline {
             .set_settings(&display_settings.current, &display_settings.increment);
     }
 
-    fn set_settings(&mut self, queue: &wgpu::Queue) {
-        self.physarum
-            .set_settings(queue, &self.base_settings.current);
+    fn set_settings(&mut self, _queue: &wgpu::Queue) {
+        // Don't need to call self.physarum.set_settings(), that is called every frame with the
+        // latest settings anyways.
         self.set_text_settings();
     }
 
@@ -328,9 +328,18 @@ impl Pipeline {
         let render_fft = match bins {
             Some(bins) => {
                 self.fft_visualizer.prepare(queue, bins);
+                let mut combined_settings = self.base_settings.current;
+                for (bin_settings, scale) in self.fft_settings.iter().zip(bins.iter()) {
+                    combined_settings = combined_settings + bin_settings.current * *scale;
+                }
+                self.physarum.set_settings(queue, &combined_settings);
                 true
             }
-            None => false,
+            None => {
+                self.physarum
+                    .set_settings(queue, &self.base_settings.current);
+                false
+            }
         };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -384,5 +393,51 @@ impl Pipeline {
         }
 
         queue.submit([encoder.finish()]);
+    }
+}
+
+impl std::ops::Add<PointSettings> for PointSettings {
+    type Output = PointSettings;
+    fn add(self, rhs: PointSettings) -> Self::Output {
+        PointSettings {
+            default_scaling_factor: self.default_scaling_factor + rhs.default_scaling_factor,
+            sd_base: self.sd_base + rhs.sd_base,
+            sd_exponent: self.sd_exponent + rhs.sd_exponent,
+            sd_amplitude: self.sd_amplitude + rhs.sd_amplitude,
+            sa_base: self.sa_base + rhs.sa_base,
+            sa_exponent: self.sa_exponent + rhs.sa_exponent,
+            sa_amplitude: self.sa_amplitude + rhs.sa_amplitude,
+            ra_base: self.ra_base + rhs.ra_base,
+            ra_exponent: self.ra_exponent + rhs.ra_exponent,
+            ra_amplitude: self.ra_amplitude + rhs.ra_amplitude,
+            md_base: self.md_base + rhs.md_base,
+            md_exponent: self.md_exponent + rhs.md_exponent,
+            md_amplitude: self.md_amplitude + rhs.md_amplitude,
+            sensor_bias_1: self.sensor_bias_1 + rhs.sensor_bias_1,
+            sensor_bias_2: self.sensor_bias_2 + rhs.sensor_bias_2,
+        }
+    }
+}
+
+impl std::ops::Mul<f32> for PointSettings {
+    type Output = PointSettings;
+    fn mul(self, rhs: f32) -> Self::Output {
+        PointSettings {
+            default_scaling_factor: self.default_scaling_factor * rhs,
+            sd_base: self.sd_base * rhs,
+            sd_exponent: self.sd_exponent * rhs,
+            sd_amplitude: self.sd_amplitude * rhs,
+            sa_base: self.sa_base * rhs,
+            sa_exponent: self.sa_exponent * rhs,
+            sa_amplitude: self.sa_amplitude * rhs,
+            ra_base: self.ra_base * rhs,
+            ra_exponent: self.ra_exponent * rhs,
+            ra_amplitude: self.ra_amplitude * rhs,
+            md_base: self.md_base * rhs,
+            md_exponent: self.md_exponent * rhs,
+            md_amplitude: self.md_amplitude * rhs,
+            sensor_bias_1: self.sensor_bias_1 * rhs,
+            sensor_bias_2: self.sensor_bias_2 * rhs,
+        }
     }
 }
