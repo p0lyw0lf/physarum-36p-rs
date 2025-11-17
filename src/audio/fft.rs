@@ -27,7 +27,7 @@ pub const NUM_FREQUENCY_RANGES: usize = FREQUENCY_RANGES.len();
 /// Given a list of samples, compute the FFT & bucket the results into pre-determined frequency
 /// ranges.
 pub fn fft_buckets(samples: &mut [Sample; SAMPLES], sample_rate: SampleRate) -> Vec<f32> {
-    let spectrum = microfft::real::rfft_2048(samples);
+    let spectrum = microfft::real::rfft_4096(samples);
     // since the real-valued coefficient at the Nyquist frequency is packed into the
     // imaginary part of the DC bin, it must be cleared before computing the amplitudes
     spectrum[0].im = 0.0;
