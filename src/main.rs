@@ -160,21 +160,21 @@ impl State {
 
     fn render(&mut self, bins: Option<&[f32; NUM_FREQUENCY_RANGES]>) {
         // Create texture view
-        let surface_texture = self
-            .surface
-            .get_current_texture()
-            .expect("failed to acquire next swapchain texture");
+        if let Ok(surface_texture) = self.surface.get_current_texture() {
+            self.pipeline.render(
+                &self.device,
+                &self.queue,
+                &surface_texture.texture,
+                self.surface_format,
+                bins,
+            );
 
-        self.pipeline.render(
-            &self.device,
-            &self.queue,
-            &surface_texture.texture,
-            self.surface_format,
-            bins,
-        );
-
-        self.window.pre_present_notify();
-        surface_texture.present();
+            self.window.pre_present_notify();
+            surface_texture.present();
+        } else {
+            // Surface texture creation failed for whatever reason; on Linux, this usually means
+            // that the window was drawn over by something else.
+        }
     }
 }
 
