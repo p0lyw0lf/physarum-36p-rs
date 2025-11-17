@@ -2,6 +2,10 @@
 
 use std::sync::{Arc, Mutex, mpsc};
 
+use rodio::{
+    DeviceTrait,
+    cpal::{Host, traits::HostTrait},
+};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
@@ -77,11 +81,34 @@ impl State {
         // Configure surface for the first time
         state.configure_surface();
 
-        // TODO: some way to stop this sound
         if let Some(file) = &flags.music {
-            let output_stream = rodio::OutputStreamBuilder::open_default_stream()
-                .expect("could not open default stream");
+            /// Returns a PulseAudio device, if there is one.
+            /// cpal only supports ALSA on Linux, but fortunately that has a PulseAudio backend
+            /// which seems to be the thing we actually use on KDE for routing audio stuff.
+            fn find_pulse_device() -> Option<rodio::cpal::Device> {
+                #[cfg(target_os = "linux")]
+                for device in rodio::cpal::host_from_id(rodio::cpal::HostId::Alsa)
+                    .expect("could not open host")
+                    .output_devices()
+                    .expect("could not enumerate output devices")
+                {
+                    let name = device.name().expect("could not read device name");
+                    if name == "pulse" {
+                        return Some(device);
+                    }
+                }
+
+                None
+            }
+            let output_stream = match find_pulse_device() {
+                Some(device) => rodio::OutputStreamBuilder::from_device(device),
+                None => rodio::OutputStreamBuilder::from_default_device(),
+            }
+            .expect("could not build output stream from device")
+            .open_stream()
+            .expect("could not open output stream");
             let mixer = output_stream.mixer();
+            // TODO: some way to pause/otherwise control this sink with the keyboard
             let sink = rodio::Sink::connect_new(mixer);
 
             let file = std::fs::File::open(file).expect("could not open music file");
