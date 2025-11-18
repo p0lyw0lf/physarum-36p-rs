@@ -6,5 +6,5 @@ TODO:
 + [ ] Ability to switch between default point settings
 + [x] Ability to modify current point settings
 + [ ] Ability to play/pause music
-+ [ ] Ability to sync changes in point settings to different parts of the
++ [x] Ability to sync changes in point settings to different parts of the
       music's frequency band amplitudes.
