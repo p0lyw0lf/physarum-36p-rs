@@ -99,18 +99,18 @@ fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings
         format!("RA0:{ra_base:>WIDTH$.PREC$}({ra_base_incr:+.PREC$})  "),
         format!("MD0:{md_base:>WIDTH$.PREC$}({md_base_incr:+.PREC$})  "),
         format!(
-            "DSF:{default_scaling_factor:>WIDTH$.PREC$}({default_scaling_factor_incr:+.PREC$}\n"
+            "DSF:{default_scaling_factor:>WIDTH$.PREC$}({default_scaling_factor_incr:+.PREC$})\n"
         ),
         format!("SDA:{sd_amplitude:>WIDTH$.PREC$}({sd_amplitude_incr:+.PREC$})  "),
         format!("SAA:{sa_amplitude:>WIDTH$.PREC$}({sa_amplitude_incr:+.PREC$})  "),
         format!("RAA:{ra_amplitude:>WIDTH$.PREC$}({ra_amplitude_incr:+.PREC$})  "),
         format!("MDA:{md_amplitude:>WIDTH$.PREC$}({md_amplitude_incr:+.PREC$})  "),
-        format!("SB1:{sensor_bias_1:>WIDTH$.PREC$}({sensor_bias_1_incr:+.PREC$}\n"),
+        format!("SB1:{sensor_bias_1:>WIDTH$.PREC$}({sensor_bias_1_incr:+.PREC$})\n"),
         format!("SDE:{sd_exponent:>WIDTH$.PREC$}({sd_exponent_incr:+.PREC$})  "),
         format!("SAE:{sa_exponent:>WIDTH$.PREC$}({sa_exponent_incr:+.PREC$})  "),
         format!("RAE:{ra_exponent:>WIDTH$.PREC$}({ra_exponent_incr:+.PREC$})  "),
         format!("MDE:{md_exponent:>WIDTH$.PREC$}({md_exponent_incr:+.PREC$})  "),
-        format!("SB2:{sensor_bias_2:>WIDTH$.PREC$}({sensor_bias_2_incr:+.PREC$}\n"),
+        format!("SB2:{sensor_bias_2:>WIDTH$.PREC$}({sensor_bias_2_incr:+.PREC$})\n"),
     ]
 }
 
