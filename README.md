@@ -9,7 +9,7 @@ TODO:
 + [x] Ability to switch between default point settings
 + [x] Ability to sync changes in point settings to different parts of the
       music's frequency band amplitudes.
-+ [ ] Ability to play/pause music
++ [x] Ability to play/pause music
 + [ ] Ability to save/load default point settings
 
 ## Keybinds
@@ -65,3 +65,15 @@ Once a band is selected, the level corresponding to it will turn red, as well
 the settings to let you know what mode you're in. Then, modifying parameters
 can be done like normal, only the currently selected parameter will be yellow
 instead.
+
+### Controlling Music Playback
+
+Music playback is controlled with function keys that correspond to media keys
+on my laptop. These will not be the same media keys on all laptops, but too bad
+I'm writing this for me.
+
+* F2: Seek backwards 10s
+* F3: Play/Pause
+* F4: Seek forwards 10s
+
+There is no way to configure seek distance at this time.

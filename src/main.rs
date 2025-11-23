@@ -1,13 +1,16 @@
 #![allow(clippy::approx_constant)]
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::{
+    sync::{Arc, Mutex, mpsc},
+    time::Duration,
+};
 
 use rodio::{DeviceTrait, cpal::traits::HostTrait};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{Key, NamedKey, PhysicalKey},
+    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{Fullscreen, Window, WindowId},
 };
 
@@ -176,6 +179,40 @@ impl State {
     }
 }
 
+impl Audio {
+    fn handle_music_key(&self, key: KeyCode, repeat: bool) -> bool {
+        match key {
+            KeyCode::F2 => {
+                let pos = self.sink.get_pos();
+                let next_pos = pos.saturating_sub(Duration::from_secs(10));
+                match self.sink.try_seek(next_pos) {
+                    Ok(()) => {}
+                    Err(err) => eprintln!("Error seeking backwards: {err}"),
+                };
+                true
+            }
+            KeyCode::F3 if !repeat => {
+                if self.sink.is_paused() {
+                    self.sink.play();
+                } else {
+                    self.sink.pause();
+                }
+                true
+            }
+            KeyCode::F4 => {
+                let pos = self.sink.get_pos();
+                let next_pos = pos.saturating_add(Duration::from_secs(10));
+                match self.sink.try_seek(next_pos) {
+                    Ok(()) => {}
+                    Err(err) => eprintln!("Error seeking forwards: {err}"),
+                };
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 struct App {
     flags: flags::Main,
     close_requested: bool,
@@ -250,10 +287,19 @@ impl ApplicationHandler for App {
                     KeyEvent {
                         physical_key: PhysicalKey::Code(key),
                         state: ElementState::Pressed,
+                        repeat,
                         ..
                     },
                 ..
             } => {
+                if state
+                    .audio
+                    .as_ref()
+                    .map(|audio| audio.handle_music_key(key, repeat))
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 state.pipeline.handle_keypress(&state.queue, key);
             }
             _ => (),

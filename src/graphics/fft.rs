@@ -319,7 +319,6 @@ impl Pipeline {
     }
 
     pub fn prepare(&mut self, queue: &wgpu::Queue, bins: &[f32; NUM_BINS]) {
-        println!("{bins:?}");
         let offset_data: Vec<glam::Vec2> =
             bins.iter().map(|v| glam::vec2(0.0, *v * -0.2)).collect();
         queue.write_buffer(

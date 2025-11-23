@@ -150,19 +150,28 @@ where
     F1: FnMut(Sample, ChannelCount),
     F2: FnMut(ChannelCount, SampleRate),
 {
+    #[inline(always)]
     fn current_span_len(&self) -> Option<usize> {
         self.inner.current_span_len()
     }
 
+    #[inline(always)]
     fn channels(&self) -> rodio::ChannelCount {
         self.inner.channels()
     }
 
+    #[inline(always)]
     fn sample_rate(&self) -> rodio::SampleRate {
         self.inner.sample_rate()
     }
 
+    #[inline(always)]
     fn total_duration(&self) -> Option<std::time::Duration> {
         self.inner.total_duration()
+    }
+
+    #[inline(always)]
+    fn try_seek(&mut self, pos: std::time::Duration) -> Result<(), rodio::source::SeekError> {
+        self.inner.try_seek(pos)
     }
 }
