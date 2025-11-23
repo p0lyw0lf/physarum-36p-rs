@@ -7,7 +7,9 @@ use crate::fs::default_settings;
 
 mod camera_2d;
 mod fft;
+mod geometry_2d;
 mod physarum;
+mod playback;
 mod preset;
 mod settings;
 mod text;
@@ -35,8 +37,9 @@ pub struct Pipeline {
     /// MUST be in the range 0..settings_presets.len()
     settings_index: usize,
 
-    physarum: physarum::Pipeline,
+    playback: playback::Pipeline,
     fft_visualizer: fft::Pipeline,
+    physarum: physarum::Pipeline,
 
     text: text::Pipeline,
     settings_text: settings::Text,
@@ -57,8 +60,9 @@ impl Pipeline {
             settings: settings_presets[0].clone(),
             settings_presets,
             settings_index: 0,
-            physarum: physarum::Pipeline::new(device, queue, surface_format),
+            playback: playback::Pipeline::new(device, queue, surface_format),
             fft_visualizer: fft::Pipeline::new(device, queue, surface_format),
+            physarum: physarum::Pipeline::new(device, queue, surface_format),
             text: text::Pipeline::new(device, size, surface_format),
             settings_text: settings::Text::new(),
             preset_text: preset::Text::new(),
@@ -71,8 +75,9 @@ impl Pipeline {
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
-        self.physarum.resize(queue, new_size);
+        self.playback.resize(queue, new_size);
         self.fft_visualizer.resize(queue, new_size);
+        self.physarum.resize(queue, new_size);
         self.text.resize(queue, new_size);
         self.settings_text.resize(new_size);
         self.preset_text.resize(new_size);
@@ -369,6 +374,8 @@ impl Pipeline {
         );
         let render_fft = match bins {
             Some(bins) => {
+                // TODO: get actual position from location in song
+                self.playback.prepare(queue, 50.0);
                 self.fft_visualizer.prepare(queue, bins);
                 let mut combined_settings = self.settings.base.current.clone();
                 for (bin_settings, scale) in self.settings.fft.iter().zip(bins.iter()) {
@@ -430,6 +437,7 @@ impl Pipeline {
             self.physarum.render_pass(&mut render_pass);
             self.text.render_pass(&mut render_pass);
             if render_fft {
+                self.playback.render_pass(&mut render_pass);
                 self.fft_visualizer.render_pass(&mut render_pass);
             }
         }
