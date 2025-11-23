@@ -1,11 +1,9 @@
-use bytemuck::Zeroable;
 use winit::dpi::PhysicalSize;
 use winit::keyboard::KeyCode;
 
-use crate::audio::NUM_FREQUENCY_RANGES;
-use crate::constants::DEFAULT_INCREMENT_SETTINGS;
-use crate::constants::DEFAULT_POINT_SETTINGS;
-use crate::shaders::compute_shader::PointSettings;
+use crate::audio::NUM_BINS;
+use crate::fs::Settings;
+use crate::fs::default_settings;
 
 mod camera_2d;
 mod fft_visualizer;
@@ -19,25 +17,14 @@ pub enum Mode {
     Fft {
         /// The parameter we're currently changing, if any
         param: Option<Param>,
-        /// Which FFT bin we're changing for. MUST be in the range 0..NUM_FREQUENCY_RANGES
+        /// Which FFT bin we're changing for. MUST be in the range 0..NUM_BINS
         index: BinIndex,
     },
 }
 
-#[derive(Clone)]
-struct DisplaySettings {
-    /// The actual settings used for calculation in the simulation.
-    current: PointSettings,
-    /// When a key is pressed, how much to increment a givens setting by.
-    increment: PointSettings,
-}
-
 pub struct Pipeline {
     mode: Mode,
-    /// The base point settings, before any scaling from FFT bins are applied.
-    base_settings: DisplaySettings,
-    /// How much to add to each base point, scaled by the amount in each FFT bin.
-    fft_settings: [DisplaySettings; NUM_FREQUENCY_RANGES],
+    settings: Settings,
 
     physarum: physarum::Pipeline,
     text: text::Pipeline<'static>,
@@ -53,14 +40,8 @@ impl Pipeline {
     ) -> Self {
         let mut out = Self {
             mode: Mode::Normal,
-            base_settings: DisplaySettings {
-                current: DEFAULT_POINT_SETTINGS[0],
-                increment: DEFAULT_INCREMENT_SETTINGS,
-            },
-            fft_settings: std::array::repeat(DisplaySettings {
-                current: PointSettings::zeroed(),
-                increment: DEFAULT_INCREMENT_SETTINGS,
-            }),
+            // TODO: read from file, keep entire vec in memory
+            settings: default_settings()[0].clone(),
             physarum: physarum::Pipeline::new(device, queue, surface_format),
             text: text::Pipeline::new(device, queue, size, surface_format),
             fft_visualizer: fft_visualizer::Pipeline::new(device, queue, surface_format),
@@ -74,11 +55,10 @@ impl Pipeline {
 
     fn set_text_settings(&mut self) {
         let display_settings = match self.mode {
-            Mode::Normal | Mode::Base(_) => &self.base_settings,
-            Mode::Fft { index, param: _ } => &self.fft_settings[index.0],
+            Mode::Normal | Mode::Base(_) => &self.settings.base,
+            Mode::Fft { index, param: _ } => &self.settings.fft[index.0],
         };
-        self.text
-            .set_settings(&display_settings.current, &display_settings.increment);
+        self.text.set_settings(display_settings);
     }
 
     fn set_settings(&mut self, _queue: &wgpu::Queue) {
@@ -199,19 +179,19 @@ macro_rules! param_enum {
                     $name::$case => {
                         match key {
                             KeyCode::ArrowUp => {
-                                state.base_settings.current.$param += state.base_settings.increment.$param;
+                                state.settings.base.current.$param += state.settings.base.increment.$param;
                                 state.set_settings(queue);
                             }
                             KeyCode::ArrowDown => {
-                                state.base_settings.current.$param -= state.base_settings.increment.$param;
+                                state.settings.base.current.$param -= state.settings.base.increment.$param;
                                 state.set_settings(queue);
                             }
-                            KeyCode::ArrowLeft if state.base_settings.increment.$param < 100.0 => {
-                                state.base_settings.increment.$param *= 10.0;
+                            KeyCode::ArrowLeft if state.settings.base.increment.$param < 100.0 => {
+                                state.settings.base.increment.$param *= 10.0;
                                 state.set_settings(queue);
                             }
-                            KeyCode::ArrowRight if state.base_settings.increment.$param > 0.001 => {
-                                state.base_settings.increment.$param /= 10.0;
+                            KeyCode::ArrowRight if state.settings.base.increment.$param > 0.001 => {
+                                state.settings.base.increment.$param /= 10.0;
                                 state.set_settings(queue);
                             }
                             _ => return false,
@@ -223,7 +203,7 @@ macro_rules! param_enum {
 
             // Returns whether this has handled the keypress
             fn apply_to_fft(&self, state: &mut Pipeline, queue: &wgpu::Queue, key: KeyCode, index: BinIndex) -> bool {
-                let display_settings = &mut state.fft_settings[index.0];
+                let display_settings = &mut state.settings.fft[index.0];
                 match self { $(
                     $name::$case => {
                         match key {
@@ -265,21 +245,21 @@ param_enum!(
     // Use the block in the left-hand side of the keyboard, exactly corresponding to where the
     // parameters will be rendered on the screen.
     pub enum Param {
-        SDBase = sd_base = KeyQ,
-        SDAmplitude = sd_amplitude = KeyA,
-        SDExponent = sd_exponent = KeyZ,
-        SABase = sa_base = KeyW,
-        SAAmplitude = sa_amplitude = KeyS,
-        SAExponent = sa_exponent = KeyX,
-        RABase = ra_base = KeyE,
-        RAAmplitude = ra_amplitude = KeyD,
-        RAExponent = ra_exponent = KeyC,
-        MDBase = md_base = KeyR,
-        MDAmplitude = md_amplitude = KeyF,
-        MDExponent = md_exponent = KeyV,
-        DefaultScalingFactor = default_scaling_factor = KeyT,
-        SensorBias1 = sensor_bias_1 = KeyG,
-        SensorBias2 = sensor_bias_2 = KeyB,
+        SDBase = sd0 = KeyQ,
+        SDAmplitude = sda = KeyA,
+        SDExponent = sde = KeyZ,
+        SABase = sa0 = KeyW,
+        SAAmplitude = saa = KeyS,
+        SAExponent = sae = KeyX,
+        RABase = ra0 = KeyE,
+        RAAmplitude = raa = KeyD,
+        RAExponent = rae = KeyC,
+        MDBase = md0 = KeyR,
+        MDAmplitude = mda = KeyF,
+        MDExponent = mde = KeyV,
+        DefaultScalingFactor = dsf = KeyT,
+        SensorBias1 = sb1 = KeyG,
+        SensorBias2 = sb2 = KeyB,
     }
 );
 
@@ -322,22 +302,22 @@ impl Pipeline {
         queue: &wgpu::Queue,
         surface_texture: &wgpu::Texture,
         surface_format: wgpu::TextureFormat,
-        bins: Option<&[f32; NUM_FREQUENCY_RANGES]>,
+        bins: Option<&[f32; NUM_BINS]>,
     ) {
         self.text.prepare(device, queue);
         let render_fft = match bins {
             Some(bins) => {
                 self.fft_visualizer.prepare(queue, bins);
-                let mut combined_settings = self.base_settings.current;
-                for (bin_settings, scale) in self.fft_settings.iter().zip(bins.iter()) {
-                    combined_settings = combined_settings + bin_settings.current * *scale;
+                let mut combined_settings = self.settings.base.current.clone();
+                for (bin_settings, scale) in self.settings.fft.iter().zip(bins.iter()) {
+                    combined_settings = combined_settings + bin_settings.current.clone() * *scale;
                 }
-                self.physarum.set_settings(queue, &combined_settings);
+                self.physarum.set_settings(queue, &combined_settings.into());
                 true
             }
             None => {
                 self.physarum
-                    .set_settings(queue, &self.base_settings.current);
+                    .set_settings(queue, &self.settings.base.current.clone().into());
                 false
             }
         };
@@ -393,51 +373,5 @@ impl Pipeline {
         }
 
         queue.submit([encoder.finish()]);
-    }
-}
-
-impl std::ops::Add<PointSettings> for PointSettings {
-    type Output = PointSettings;
-    fn add(self, rhs: PointSettings) -> Self::Output {
-        PointSettings {
-            default_scaling_factor: self.default_scaling_factor + rhs.default_scaling_factor,
-            sd_base: self.sd_base + rhs.sd_base,
-            sd_exponent: self.sd_exponent + rhs.sd_exponent,
-            sd_amplitude: self.sd_amplitude + rhs.sd_amplitude,
-            sa_base: self.sa_base + rhs.sa_base,
-            sa_exponent: self.sa_exponent + rhs.sa_exponent,
-            sa_amplitude: self.sa_amplitude + rhs.sa_amplitude,
-            ra_base: self.ra_base + rhs.ra_base,
-            ra_exponent: self.ra_exponent + rhs.ra_exponent,
-            ra_amplitude: self.ra_amplitude + rhs.ra_amplitude,
-            md_base: self.md_base + rhs.md_base,
-            md_exponent: self.md_exponent + rhs.md_exponent,
-            md_amplitude: self.md_amplitude + rhs.md_amplitude,
-            sensor_bias_1: self.sensor_bias_1 + rhs.sensor_bias_1,
-            sensor_bias_2: self.sensor_bias_2 + rhs.sensor_bias_2,
-        }
-    }
-}
-
-impl std::ops::Mul<f32> for PointSettings {
-    type Output = PointSettings;
-    fn mul(self, rhs: f32) -> Self::Output {
-        PointSettings {
-            default_scaling_factor: self.default_scaling_factor * rhs,
-            sd_base: self.sd_base * rhs,
-            sd_exponent: self.sd_exponent * rhs,
-            sd_amplitude: self.sd_amplitude * rhs,
-            sa_base: self.sa_base * rhs,
-            sa_exponent: self.sa_exponent * rhs,
-            sa_amplitude: self.sa_amplitude * rhs,
-            ra_base: self.ra_base * rhs,
-            ra_exponent: self.ra_exponent * rhs,
-            ra_amplitude: self.ra_amplitude * rhs,
-            md_base: self.md_base * rhs,
-            md_exponent: self.md_exponent * rhs,
-            md_amplitude: self.md_amplitude * rhs,
-            sensor_bias_1: self.sensor_bias_1 * rhs,
-            sensor_bias_2: self.sensor_bias_2 * rhs,
-        }
     }
 }

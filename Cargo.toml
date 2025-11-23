@@ -8,8 +8,10 @@ name = "physarum"
 path = "src/main.rs"
 
 [dependencies]
-bytemuck = "1.23"
+bytemuck = { version = "1.24", features = ["impl_core_error"] }
 env_logger = "0.11"
+facet = "0.31"
+facet-json = "0.31"
 font-kit = "0.14"
 glam = { version = "0.30", features = ["bytemuck", "encase"] }
 microfft = "0.6.0"

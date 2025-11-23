@@ -1,13 +1,13 @@
 use winit::dpi::PhysicalSize;
 
 use crate::{
-    audio::NUM_FREQUENCY_RANGES,
+    audio::NUM_BINS,
     constants::HEADER_HEIGHT,
     graphics::{Mode, camera_2d},
     shaders::tris_render_shader as render_shader,
 };
 
-const VISUALIZER_WIDTH: u32 = HEADER_HEIGHT * NUM_FREQUENCY_RANGES as u32;
+const VISUALIZER_WIDTH: u32 = HEADER_HEIGHT * NUM_BINS as u32;
 
 pub struct Pipeline {
     render_uniforms_buffer: wgpu::Buffer,
@@ -17,10 +17,10 @@ pub struct Pipeline {
     vertex_buffer: wgpu::Buffer,
     num_vertices: usize,
     // The colors to apply to the geometry. It contains things type glam::Vec4, and has length
-    // NUM_FREQUENCY_RANGES.
+    // NUM_BINS.
     color_buffer: wgpu::Buffer,
     // The offsets to apply to the geometry. It contains things type glam::Vec2, and has length
-    // NUM_FREQUENCY_RANGES.
+    // NUM_BINS.
     offset_buffer: wgpu::Buffer,
 
     render_bind_group: render_shader::bind_groups::BindGroup0,
@@ -198,7 +198,7 @@ impl Pipeline {
 
         // Create the base visualizer geometry
         let mut vertex_data = Vec::<render_shader::Vertex>::new();
-        for i in 0..NUM_FREQUENCY_RANGES {
+        for i in 0..NUM_BINS {
             const H: f32 = HEADER_HEIGHT as f32;
 
             let i = i as u32;
@@ -227,11 +227,11 @@ impl Pipeline {
         });
         queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertex_data[..]));
 
-        // The previous geometry created exactly `NUM_FREQUENCY_RANGES` indexes that we need to
+        // The previous geometry created exactly `NUM_BINS` indexes that we need to
         // fill with colors and offsets.
         let color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fft color buffer"),
-            size: (size_of::<glam::Vec4>() * NUM_FREQUENCY_RANGES) as u64,
+            size: (size_of::<glam::Vec4>() * NUM_BINS) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -239,7 +239,7 @@ impl Pipeline {
 
         let offset_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fft offset buffer"),
-            size: (size_of::<glam::Vec2>() * NUM_FREQUENCY_RANGES) as u64,
+            size: (size_of::<glam::Vec2>() * NUM_BINS) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -306,7 +306,7 @@ impl Pipeline {
             Mode::Fft { index, param: _ } => Some(index.0),
             Mode::Normal | Mode::Base(_) => None,
         };
-        let color_data: Vec<glam::Vec4> = (0..NUM_FREQUENCY_RANGES)
+        let color_data: Vec<glam::Vec4> = (0..NUM_BINS)
             .map(|index| {
                 if Some(index) == highlighted_index {
                     // red
@@ -320,7 +320,7 @@ impl Pipeline {
         queue.write_buffer(&self.color_buffer, 0, bytemuck::cast_slice(&color_data[..]));
     }
 
-    pub fn prepare(&mut self, queue: &wgpu::Queue, bins: &[f32; NUM_FREQUENCY_RANGES]) {
+    pub fn prepare(&mut self, queue: &wgpu::Queue, bins: &[f32; NUM_BINS]) {
         println!("{bins:?}");
         let offset_data: Vec<glam::Vec2> =
             bins.iter().map(|v| glam::vec2(0.0, *v * -0.2)).collect();

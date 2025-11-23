@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use crate::audio::collector::Collector;
 use crate::audio::fft::fft_buckets;
-use crate::audio::{NUM_FREQUENCY_RANGES, SAMPLES};
+use crate::audio::{NUM_BINS, SAMPLES};
 
 pub struct Worker {
     /// Waits on this to start the next batch of work
@@ -20,7 +20,7 @@ impl Worker {
         collector: Arc<Mutex<Collector>>,
     ) -> (mpsc::SyncSender<()>, Arc<Mutex<Vec<f32>>>, Self) {
         let (tx, rx) = mpsc::sync_channel(1);
-        let bins = Arc::new(Mutex::new([0.0; NUM_FREQUENCY_RANGES].into()));
+        let bins = Arc::new(Mutex::new([0.0; NUM_BINS].into()));
         (
             tx,
             bins.clone(),

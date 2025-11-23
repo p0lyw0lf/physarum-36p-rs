@@ -12,9 +12,9 @@ use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use winit::dpi::PhysicalSize;
 
 use crate::constants::HEADER_HEIGHT;
+use crate::fs::{DisplaySettings, PointSettings};
 use crate::graphics::Mode;
 use crate::graphics::Param;
-use crate::shaders::compute_shader::PointSettings;
 
 pub struct Pipeline<'a> {
     brush: TextBrush<FontRef<'a>>,
@@ -55,62 +55,60 @@ impl TextMode {
     }
 }
 
-fn display_settings(base_settings: &PointSettings, incr_settings: &PointSettings) -> [String; 15] {
+fn format_display_settings(display_settings: &DisplaySettings) -> [String; 15] {
     let PointSettings {
-        default_scaling_factor,
-        sd_base,
-        sd_exponent,
-        sd_amplitude,
-        sa_base,
-        sa_exponent,
-        sa_amplitude,
-        ra_base,
-        ra_exponent,
-        ra_amplitude,
-        md_base,
-        md_exponent,
-        md_amplitude,
-        sensor_bias_1,
-        sensor_bias_2,
-    } = base_settings;
+        sd0,
+        sde,
+        sda,
+        sa0,
+        sae,
+        saa,
+        ra0,
+        rae,
+        raa,
+        md0,
+        mde,
+        mda,
+        dsf,
+        sb1,
+        sb2,
+    } = &display_settings.current;
     let PointSettings {
-        default_scaling_factor: default_scaling_factor_incr,
-        sd_base: sd_base_incr,
-        sd_exponent: sd_exponent_incr,
-        sd_amplitude: sd_amplitude_incr,
-        sa_base: sa_base_incr,
-        sa_exponent: sa_exponent_incr,
-        sa_amplitude: sa_amplitude_incr,
-        ra_base: ra_base_incr,
-        ra_exponent: ra_exponent_incr,
-        ra_amplitude: ra_amplitude_incr,
-        md_base: md_base_incr,
-        md_exponent: md_exponent_incr,
-        md_amplitude: md_amplitude_incr,
-        sensor_bias_1: sensor_bias_1_incr,
-        sensor_bias_2: sensor_bias_2_incr,
-    } = incr_settings;
+        sd0: sd0_incr,
+        sde: sde_incr,
+        sda: sda_incr,
+        sa0: sa0_incr,
+        sae: sae_incr,
+        saa: saa_incr,
+        ra0: ra0_incr,
+        rae: rae_incr,
+        raa: raa_incr,
+        md0: md0_incr,
+        mde: mde_incr,
+        mda: mda_incr,
+        dsf: dsf_incr,
+        sb1: sb1_incr,
+        sb2: sb2_incr,
+    } = &display_settings.increment;
 
     const WIDTH: usize = 8;
     const PREC: usize = 3;
     [
-        format!("SD0:{sd_base:>WIDTH$.PREC$}({sd_base_incr:+.PREC$})  "),
-        format!("SA0:{sa_base:>WIDTH$.PREC$}({sa_base_incr:+.PREC$})  "),
-        format!("RA0:{ra_base:>WIDTH$.PREC$}({ra_base_incr:+.PREC$})  "),
-        format!("MD0:{md_base:>WIDTH$.PREC$}({md_base_incr:+.PREC$})  "),
-        format!(
-            "DSF:{default_scaling_factor:>WIDTH$.PREC$}({default_scaling_factor_incr:+.PREC$})\n"
-        ),
-        format!("SDA:{sd_amplitude:>WIDTH$.PREC$}({sd_amplitude_incr:+.PREC$})  "),
-        format!("SAA:{sa_amplitude:>WIDTH$.PREC$}({sa_amplitude_incr:+.PREC$})  "),
-        format!("RAA:{ra_amplitude:>WIDTH$.PREC$}({ra_amplitude_incr:+.PREC$})  "),
-        format!("MDA:{md_amplitude:>WIDTH$.PREC$}({md_amplitude_incr:+.PREC$})  "),
-        format!("SB1:{sensor_bias_1:>WIDTH$.PREC$}({sensor_bias_1_incr:+.PREC$})\n"),
-        format!("SDE:{sd_exponent:>WIDTH$.PREC$}({sd_exponent_incr:+.PREC$})  "),
-        format!("SAE:{sa_exponent:>WIDTH$.PREC$}({sa_exponent_incr:+.PREC$})  "),
-        format!("RAE:{ra_exponent:>WIDTH$.PREC$}({ra_exponent_incr:+.PREC$})  "),
-        format!("MDE:{md_exponent:>WIDTH$.PREC$}({md_exponent_incr:+.PREC$})  "),
-        format!("SB2:{sensor_bias_2:>WIDTH$.PREC$}({sensor_bias_2_incr:+.PREC$})\n"),
+        format!("SD0:{sd0:>WIDTH$.PREC$}({sd0_incr:+.PREC$})  "),
+        format!("SA0:{sa0:>WIDTH$.PREC$}({sa0_incr:+.PREC$})  "),
+        format!("RA0:{ra0:>WIDTH$.PREC$}({ra0_incr:+.PREC$})  "),
+        format!("MD0:{md0:>WIDTH$.PREC$}({md0_incr:+.PREC$})  "),
+        format!("DSF:{dsf:>WIDTH$.PREC$}({dsf_incr:+.PREC$})\n"),
+        format!("SDA:{sda:>WIDTH$.PREC$}({sda_incr:+.PREC$})  "),
+        format!("SAA:{saa:>WIDTH$.PREC$}({saa_incr:+.PREC$})  "),
+        format!("RAA:{raa:>WIDTH$.PREC$}({raa_incr:+.PREC$})  "),
+        format!("MDA:{mda:>WIDTH$.PREC$}({mda_incr:+.PREC$})  "),
+        format!("SB1:{sb1:>WIDTH$.PREC$}({sb1_incr:+.PREC$})\n"),
+        format!("SDE:{sde:>WIDTH$.PREC$}({sde_incr:+.PREC$})  "),
+        format!("SAE:{sae:>WIDTH$.PREC$}({sae_incr:+.PREC$})  "),
+        format!("RAE:{rae:>WIDTH$.PREC$}({rae_incr:+.PREC$})  "),
+        format!("MDE:{mde:>WIDTH$.PREC$}({mde_incr:+.PREC$})  "),
+        format!("SB2:{sb2:>WIDTH$.PREC$}({sb2_incr:+.PREC$})\n"),
     ]
 }
 
@@ -181,11 +179,11 @@ impl Pipeline<'_> {
             .resize_view(new_size.width as f32, new_size.height as f32, queue);
     }
 
-    pub fn set_settings(&mut self, base_settings: &PointSettings, incr_settings: &PointSettings) {
+    pub fn set_settings(&mut self, settings: &DisplaySettings) {
         let mode = self.mode;
         self.section.text.clear();
         self.section.text.extend(
-            display_settings(base_settings, incr_settings)
+            format_display_settings(settings)
                 .into_iter()
                 .enumerate()
                 .map(|(i, text)| {

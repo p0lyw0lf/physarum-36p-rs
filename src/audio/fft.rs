@@ -17,12 +17,11 @@ const FREQUENCY_RANGES: &[FrequencyRange] = {
     const BASS: FrequencyRange = fr(80.0, 250.0);
     const LOW_MIDS: FrequencyRange = fr(250.0, 500.0);
     const MIDS: FrequencyRange = fr(500.0, 2_000.0);
-    const HIGH_MIDS: FrequencyRange = fr(2_000.0, 6_000.0);
-    const HIGHS: FrequencyRange = fr(6_000.0, 10_000.0);
+    const HIGHS: FrequencyRange = fr(2_000.0, 6_000.0);
 
-    &[SUB_BASS, BASS, LOW_MIDS, MIDS, HIGH_MIDS, HIGHS]
+    &[SUB_BASS, BASS, LOW_MIDS, MIDS, HIGHS]
 };
-pub const NUM_FREQUENCY_RANGES: usize = FREQUENCY_RANGES.len();
+pub const NUM_BINS: usize = FREQUENCY_RANGES.len();
 
 /// Given a list of samples, compute the FFT & bucket the results into pre-determined frequency
 /// ranges.

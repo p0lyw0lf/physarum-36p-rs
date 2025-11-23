@@ -11,10 +11,11 @@ use winit::{
     window::{Fullscreen, Window, WindowId},
 };
 
-use crate::audio::NUM_FREQUENCY_RANGES;
+use crate::audio::NUM_BINS;
 
 mod audio;
 mod constants;
+mod fs;
 mod graphics;
 mod shaders;
 
@@ -37,7 +38,7 @@ struct Audio {
     // TODO: better naming
     tx: mpsc::SyncSender<()>,
     bins: Arc<Mutex<Vec<f32>>>,
-    last_bins: [f32; NUM_FREQUENCY_RANGES],
+    last_bins: [f32; NUM_BINS],
 }
 
 impl State {
@@ -121,7 +122,7 @@ impl State {
                 sink,
                 tx,
                 bins,
-                last_bins: [0.0; NUM_FREQUENCY_RANGES],
+                last_bins: [0.0; NUM_BINS],
             });
         }
 
@@ -155,7 +156,7 @@ impl State {
         self.configure_surface();
     }
 
-    fn render(&mut self, bins: Option<&[f32; NUM_FREQUENCY_RANGES]>) {
+    fn render(&mut self, bins: Option<&[f32; NUM_BINS]>) {
         // Create texture view
         if let Ok(surface_texture) = self.surface.get_current_texture() {
             self.pipeline.render(
