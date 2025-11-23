@@ -24,7 +24,14 @@ pub enum Mode {
 
 pub struct Pipeline {
     mode: Mode,
+    /// The settings we are currently acting on. Needs to be manually written to settings_presets.
     settings: Settings,
+    /// The list of pre-made settings that we can pull from.
+    settings_presets: Vec<Settings>,
+    /// The setting preset we last pulled from. Can be used to go to the next/previous preset, to
+    /// write to the current preset, or to insert a new preset after the given index.
+    /// MUST be in the range 0..settings_presets.len()
+    settings_index: usize,
 
     physarum: physarum::Pipeline,
     text: text::Pipeline<'static>,
@@ -38,10 +45,13 @@ impl Pipeline {
         size: PhysicalSize<u32>,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
+        // TODO: read from file
+        let settings_presets = default_settings();
         let mut out = Self {
             mode: Mode::Normal,
-            // TODO: read from file, keep entire vec in memory
-            settings: default_settings()[0].clone(),
+            settings: settings_presets[0].clone(),
+            settings_presets,
+            settings_index: 0,
             physarum: physarum::Pipeline::new(device, queue, surface_format),
             text: text::Pipeline::new(device, queue, size, surface_format),
             fft_visualizer: fft_visualizer::Pipeline::new(device, queue, surface_format),
@@ -53,27 +63,6 @@ impl Pipeline {
         out
     }
 
-    fn set_text_settings(&mut self) {
-        let display_settings = match self.mode {
-            Mode::Normal | Mode::Base(_) => &self.settings.base,
-            Mode::Fft { index, param: _ } => &self.settings.fft[index.0],
-        };
-        self.text.set_settings(display_settings);
-    }
-
-    fn set_settings(&mut self, _queue: &wgpu::Queue) {
-        // Don't need to call self.physarum.set_settings(), that is called every frame with the
-        // latest settings anyways.
-        self.set_text_settings();
-    }
-
-    fn set_mode(&mut self, queue: &wgpu::Queue, new_mode: Mode) {
-        self.mode = new_mode;
-        self.text.set_mode(self.mode);
-        self.set_text_settings();
-        self.fft_visualizer.set_mode(queue, self.mode);
-    }
-
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
         self.physarum.resize(queue, new_size);
         self.text.resize(queue, new_size);
@@ -81,12 +70,16 @@ impl Pipeline {
     }
 
     pub fn handle_keypress(&mut self, queue: &wgpu::Queue, key: KeyCode) {
-        use Mode::*;
         if key == KeyCode::Escape {
             self.set_mode(queue, Normal);
             return;
         }
 
+        if self.handle_preset_keypress(queue, key) {
+            return;
+        }
+
+        use Mode::*;
         match self.mode {
             Normal => {
                 if let Some(param) = Param::activate(key) {
@@ -160,6 +153,59 @@ impl Pipeline {
                 }
             }
         }
+    }
+
+    /// Handles all the keypresses that have to do with manipulating setting presets.
+    /// Returns true if the key was handled.
+    fn handle_preset_keypress(&mut self, queue: &wgpu::Queue, key: KeyCode) -> bool {
+        match key {
+            KeyCode::BracketLeft => {
+                let next_index = if self.settings_index == 0 {
+                    self.settings_presets.len() - 1
+                } else {
+                    self.settings_index - 1
+                };
+                self.set_settings_index(queue, next_index);
+                true
+            }
+            KeyCode::BracketRight => {
+                let next_index = if self.settings_index == self.settings_presets.len() - 1 {
+                    0
+                } else {
+                    self.settings_index + 1
+                };
+                self.set_settings_index(queue, next_index);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn set_settings_index(&mut self, queue: &wgpu::Queue, index: usize) {
+        self.settings_index = index;
+        self.settings = self.settings_presets[self.settings_index].clone();
+        self.set_settings(queue);
+    }
+
+    fn set_settings(&mut self, _queue: &wgpu::Queue) {
+        // Don't need to call self.physarum.set_settings(), that is called every frame with the
+        // latest settings anyways.
+        self.set_text_settings();
+    }
+
+    fn set_text_settings(&mut self) {
+        let display_settings = match self.mode {
+            Mode::Normal | Mode::Base(_) => &self.settings.base,
+            Mode::Fft { index, param: _ } => &self.settings.fft[index.0],
+        };
+        self.text.set_settings(display_settings);
+    }
+
+    fn set_mode(&mut self, queue: &wgpu::Queue, new_mode: Mode) {
+        self.mode = new_mode;
+        self.text.set_mode(self.mode);
+        self.set_text_settings();
+        self.fft_visualizer.set_mode(queue, self.mode);
     }
 }
 
@@ -291,7 +337,6 @@ bin_indices!(
         2 = KeyI,
         3 = KeyO,
         4 = KeyP,
-        5 = BracketLeft,
     }
 );
 
