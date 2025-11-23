@@ -1,10 +1,7 @@
-use wgpu_text::BrushBuilder;
-use wgpu_text::TextBrush;
 use wgpu_text::glyph_brush::Layout;
 use wgpu_text::glyph_brush::OwnedSection;
 use wgpu_text::glyph_brush::OwnedText;
 use wgpu_text::glyph_brush::Section;
-use wgpu_text::glyph_brush::ab_glyph::FontRef;
 use winit::dpi::PhysicalSize;
 
 use crate::constants::HEADER_HEIGHT;
@@ -16,10 +13,8 @@ use crate::graphics::text::COLOR_RED;
 use crate::graphics::text::COLOR_WHITE;
 use crate::graphics::text::COLOR_YELLOW;
 use crate::graphics::text::FONT_SIZE;
-use crate::graphics::text::MONOSPACE_FONT;
 
-pub struct Pipeline {
-    brush: TextBrush<FontRef<'static>>,
+pub struct Text {
     section: OwnedSection,
     /// What portion of the text we should highlight
     highlighted_index: Option<usize>,
@@ -137,33 +132,24 @@ fn mode_to_index(mode: Mode) -> Option<usize> {
     }
 }
 
-impl Pipeline {
-    pub fn new(
-        device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        size: PhysicalSize<u32>,
-        surface_format: wgpu::TextureFormat,
-    ) -> Self {
-        let brush_builder = BrushBuilder::using_font((*MONOSPACE_FONT).clone());
-        let brush = brush_builder.build(device, size.width, size.height, surface_format);
-
-        let section = Section::default()
-            .with_layout(Layout::default_wrap())
-            .to_owned();
-
+impl Text {
+    pub fn new() -> Self {
         Self {
-            brush,
-            section,
+            section: Section::default()
+                .with_layout(Layout::default_wrap())
+                .to_owned(),
             highlighted_index: None,
             mode: TextMode::Base,
         }
     }
 
-    pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
+    pub fn section(&self) -> &OwnedSection {
+        &self.section
+    }
+
+    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
         self.section.bounds = (new_size.width as f32, HEADER_HEIGHT as f32);
         self.section.screen_position = (0.0, 0.0);
-        self.brush
-            .resize_view(new_size.width as f32, new_size.height as f32, queue);
     }
 
     pub fn set_settings(&mut self, settings: &DisplaySettings) {
@@ -202,16 +188,6 @@ impl Pipeline {
                 .clone()
                 .with_color(self.mode.highlight_color());
         }
-    }
-
-    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.brush
-            .queue(device, queue, [&self.section])
-            .expect("settings: queuing brush");
-    }
-
-    pub fn render_pass<'pass>(&'pass self, render_pass: &mut wgpu::RenderPass<'pass>) {
-        self.brush.draw(render_pass);
     }
 }
 
