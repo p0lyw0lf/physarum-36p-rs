@@ -6,8 +6,10 @@ use crate::fs::Settings;
 use crate::fs::default_settings;
 
 mod camera_2d;
-mod fft_visualizer;
+mod fft;
 mod physarum;
+mod preset;
+mod settings;
 mod text;
 
 #[derive(Copy, Clone)]
@@ -34,8 +36,9 @@ pub struct Pipeline {
     settings_index: usize,
 
     physarum: physarum::Pipeline,
-    text: text::Pipeline<'static>,
-    fft_visualizer: fft_visualizer::Pipeline,
+    text_settings: settings::Pipeline,
+    text_preset: preset::Pipeline,
+    fft_visualizer: fft::Pipeline,
 }
 
 impl Pipeline {
@@ -53,11 +56,12 @@ impl Pipeline {
             settings_presets,
             settings_index: 0,
             physarum: physarum::Pipeline::new(device, queue, surface_format),
-            text: text::Pipeline::new(device, queue, size, surface_format),
-            fft_visualizer: fft_visualizer::Pipeline::new(device, queue, surface_format),
+            text_settings: settings::Pipeline::new(device, queue, size, surface_format),
+            text_preset: preset::Pipeline::new(device, queue, size, surface_format),
+            fft_visualizer: fft::Pipeline::new(device, queue, surface_format),
         };
 
-        out.set_settings(queue);
+        out.set_settings_index(queue, 0);
         out.set_mode(queue, Mode::Normal);
 
         out
@@ -65,7 +69,8 @@ impl Pipeline {
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
         self.physarum.resize(queue, new_size);
-        self.text.resize(queue, new_size);
+        self.text_settings.resize(queue, new_size);
+        self.text_preset.resize(queue, new_size);
         self.fft_visualizer.resize(queue, new_size);
     }
 
@@ -184,13 +189,17 @@ impl Pipeline {
     fn set_settings_index(&mut self, queue: &wgpu::Queue, index: usize) {
         self.settings_index = index;
         self.settings = self.settings_presets[self.settings_index].clone();
+        self.text_preset.set_index(index);
         self.set_settings(queue);
+        self.text_preset.set_dirty(false);
     }
 
+    /// Called whenever `self.settings` is updated, to notify anything that renders based on it.
     fn set_settings(&mut self, _queue: &wgpu::Queue) {
         // Don't need to call self.physarum.set_settings(), that is called every frame with the
         // latest settings anyways.
         self.set_text_settings();
+        self.text_preset.set_dirty(true);
     }
 
     fn set_text_settings(&mut self) {
@@ -198,12 +207,12 @@ impl Pipeline {
             Mode::Normal | Mode::Base(_) => &self.settings.base,
             Mode::Fft { index, param: _ } => &self.settings.fft[index.0],
         };
-        self.text.set_settings(display_settings);
+        self.text_settings.set_settings(display_settings);
     }
 
     fn set_mode(&mut self, queue: &wgpu::Queue, new_mode: Mode) {
         self.mode = new_mode;
-        self.text.set_mode(self.mode);
+        self.text_settings.set_mode(self.mode);
         self.set_text_settings();
         self.fft_visualizer.set_mode(queue, self.mode);
     }
@@ -349,7 +358,8 @@ impl Pipeline {
         surface_format: wgpu::TextureFormat,
         bins: Option<&[f32; NUM_BINS]>,
     ) {
-        self.text.prepare(device, queue);
+        self.text_settings.prepare(device, queue);
+        self.text_preset.prepare(device, queue);
         let render_fft = match bins {
             Some(bins) => {
                 self.fft_visualizer.prepare(queue, bins);
@@ -411,7 +421,8 @@ impl Pipeline {
             });
 
             self.physarum.render_pass(&mut render_pass);
-            self.text.render_pass(&mut render_pass);
+            self.text_settings.render_pass(&mut render_pass);
+            self.text_preset.render_pass(&mut render_pass);
             if render_fft {
                 self.fft_visualizer.render_pass(&mut render_pass);
             }

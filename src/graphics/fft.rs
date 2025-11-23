@@ -2,12 +2,10 @@ use winit::dpi::PhysicalSize;
 
 use crate::{
     audio::NUM_BINS,
-    constants::HEADER_HEIGHT,
+    constants::{FFT_WIDTH, HEADER_HEIGHT},
     graphics::{Mode, camera_2d},
     shaders::tris_render_shader as render_shader,
 };
-
-const VISUALIZER_WIDTH: u32 = HEADER_HEIGHT * NUM_BINS as u32;
 
 pub struct Pipeline {
     render_uniforms_buffer: wgpu::Buffer,
@@ -286,14 +284,14 @@ impl Pipeline {
         camera_2d::Uniforms::source_to_screen(
             size.into(),
             camera_2d::SourceRect {
-                width: VISUALIZER_WIDTH as f32,
+                width: FFT_WIDTH as f32,
                 height: HEADER_HEIGHT as f32,
             },
             // pin to the left edge of the header
             camera_2d::DestinationRect {
-                x: size.width as f32 - VISUALIZER_WIDTH as f32,
+                x: size.width as f32 - FFT_WIDTH as f32,
                 y: 0.0,
-                width: VISUALIZER_WIDTH as f32,
+                width: FFT_WIDTH as f32,
                 height: HEADER_HEIGHT as f32,
             },
             camera_2d::Mode::Fit,

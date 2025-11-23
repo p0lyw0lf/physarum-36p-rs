@@ -1,7 +1,9 @@
+use crate::audio::NUM_BINS;
 use crate::shaders::compute_shader::Constants;
 use crate::shaders::compute_shader::PointSettings;
 
 pub const HEADER_HEIGHT: u32 = 60;
+pub const FFT_WIDTH: u32 = HEADER_HEIGHT * NUM_BINS as u32;
 
 pub const SIMULATION_WIDTH: u32 = 1280;
 pub const SIMULATION_HEIGHT: u32 = 736;
