@@ -68,7 +68,7 @@ impl Pipeline {
             preset_text: preset::Text::new(),
         };
 
-        out.set_settings_index(queue, 0);
+        out.set_settings_index(0);
         out.set_mode(queue, Mode::Normal);
 
         out
@@ -89,7 +89,7 @@ impl Pipeline {
             return;
         }
 
-        if self.handle_preset_keypress(queue, key) {
+        if self.handle_preset_keypress(key) {
             return;
         }
 
@@ -105,7 +105,7 @@ impl Pipeline {
                 }
             }
             Base(param) => {
-                if param.apply_to_base(self, queue, key) {
+                if param.apply_to_base(self, key) {
                     return;
                 }
                 if let Some(new_param) = Param::activate(key) {
@@ -128,7 +128,7 @@ impl Pipeline {
             }
             Fft { param, index } => {
                 if let Some(param) = param
-                    && param.apply_to_fft(self, queue, key, index)
+                    && param.apply_to_fft(self, key, index)
                 {
                     return;
                 }
@@ -171,7 +171,7 @@ impl Pipeline {
 
     /// Handles all the keypresses that have to do with manipulating setting presets.
     /// Returns true if the key was handled.
-    fn handle_preset_keypress(&mut self, queue: &wgpu::Queue, key: KeyCode) -> bool {
+    fn handle_preset_keypress(&mut self, key: KeyCode) -> bool {
         match key {
             KeyCode::BracketLeft => {
                 let next_index = if self.settings_index == 0 {
@@ -179,7 +179,7 @@ impl Pipeline {
                 } else {
                     self.settings_index - 1
                 };
-                self.set_settings_index(queue, next_index);
+                self.set_settings_index(next_index);
                 true
             }
             KeyCode::BracketRight => {
@@ -188,23 +188,23 @@ impl Pipeline {
                 } else {
                     self.settings_index + 1
                 };
-                self.set_settings_index(queue, next_index);
+                self.set_settings_index(next_index);
                 true
             }
             _ => false,
         }
     }
 
-    fn set_settings_index(&mut self, queue: &wgpu::Queue, index: usize) {
+    fn set_settings_index(&mut self, index: usize) {
         self.settings_index = index;
         self.settings = self.settings_presets[self.settings_index].clone();
         self.preset_text.set_index(index);
-        self.set_settings(queue);
+        self.set_settings();
         self.preset_text.set_dirty(false);
     }
 
     /// Called whenever `self.settings` is updated, to notify anything that renders based on it.
-    fn set_settings(&mut self, _queue: &wgpu::Queue) {
+    fn set_settings(&mut self) {
         // Don't need to call self.physarum.set_settings(), that is called every frame with the
         // latest settings anyways.
         self.set_text_settings();
@@ -238,25 +238,25 @@ macro_rules! param_enum {
 
         impl $name {
             // Returns whether this has handled the keypress
-            fn apply_to_base(&self, state: &mut Pipeline, queue: &wgpu::Queue, key: KeyCode) -> bool {
+            fn apply_to_base(&self, state: &mut Pipeline, key: KeyCode) -> bool {
                 match self { $(
                     $name::$case => {
                         match key {
                             KeyCode::ArrowUp => {
                                 state.settings.base.current.$param += state.settings.base.increment.$param;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             KeyCode::ArrowDown => {
                                 state.settings.base.current.$param -= state.settings.base.increment.$param;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             KeyCode::ArrowLeft if state.settings.base.increment.$param < 100.0 => {
                                 state.settings.base.increment.$param *= 10.0;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             KeyCode::ArrowRight if state.settings.base.increment.$param > 0.001 => {
                                 state.settings.base.increment.$param /= 10.0;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             _ => return false,
                         };
@@ -266,26 +266,26 @@ macro_rules! param_enum {
             }
 
             // Returns whether this has handled the keypress
-            fn apply_to_fft(&self, state: &mut Pipeline, queue: &wgpu::Queue, key: KeyCode, index: BinIndex) -> bool {
+            fn apply_to_fft(&self, state: &mut Pipeline, key: KeyCode, index: BinIndex) -> bool {
                 let display_settings = &mut state.settings.fft[index.0];
                 match self { $(
                     $name::$case => {
                         match key {
                             KeyCode::ArrowUp => {
                                 display_settings.current.$param += display_settings.increment.$param;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             KeyCode::ArrowDown => {
                                 display_settings.current.$param -= display_settings.increment.$param;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             KeyCode::ArrowLeft if display_settings.increment.$param < 100.0 => {
                                 display_settings.increment.$param *= 10.0;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             KeyCode::ArrowRight if display_settings.increment.$param > 0.001 => {
                                 display_settings.increment.$param /= 10.0;
-                                state.set_settings(queue);
+                                state.set_settings();
                             }
                             _ => return false,
                         };
