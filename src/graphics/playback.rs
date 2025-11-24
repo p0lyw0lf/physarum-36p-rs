@@ -1,9 +1,13 @@
 //! This module displays everything related to audio playback. This includes the play/pause
 //! indicator and a track position indicator.
 
+use std::time::Duration;
+
 use wgpu_text::glyph_brush::Layout;
 use wgpu_text::glyph_brush::OwnedSection;
+use wgpu_text::glyph_brush::OwnedText;
 use wgpu_text::glyph_brush::Section;
+use wgpu_text::glyph_brush::VerticalAlign;
 use winit::dpi::PhysicalSize;
 
 use crate::constants::FFT_WIDTH;
@@ -17,19 +21,15 @@ use crate::graphics::geometry_2d::make_circle;
 use crate::graphics::geometry_2d::make_line;
 use crate::graphics::geometry_2d::vertex_buffer_from_geometry;
 use crate::graphics::text::COLOR_WHITE;
+use crate::graphics::text::FONT_SIZE;
 use crate::shaders::{pipelines, tris_render_shader as render_shader};
 
 const POSITION_HEIGHT: u32 = 6;
 const PLAY_HEIGHT: u32 = HEADER_HEIGHT - POSITION_HEIGHT - 6;
 
-enum PlayState {
-    Playing,
-    Paused,
-}
-
 pub struct Pipeline {
     /// Our play/pause state
-    state: PlayState,
+    playing: bool,
     /// Text for the position indicator
     section: OwnedSection,
 
@@ -81,8 +81,8 @@ impl Pipeline {
             queue,
             "pause vertex buffer",
             [
-                make_line(glam::vec2(0.3, 0.0), glam::vec2(0.3, 1.0), 0.3),
-                make_line(glam::vec2(0.7, 0.0), glam::vec2(0.7, 1.0), 0.3),
+                make_line(glam::vec2(0.2, 0.0), glam::vec2(0.2, 1.0), 0.3),
+                make_line(glam::vec2(0.8, 0.0), glam::vec2(0.8, 1.0), 0.3),
             ]
             .into_iter()
             .flat_map(|line| line.to_vertices((0, 0))),
@@ -162,9 +162,9 @@ impl Pipeline {
 
         Self {
             // We always start out playing
-            state: PlayState::Playing,
+            playing: true,
             section: Section::default()
-                .with_layout(Layout::default_wrap())
+                .with_layout(Layout::default_wrap().v_align(VerticalAlign::Bottom))
                 .to_owned(),
             render_uniforms_buffer_play,
             render_uniforms_buffer_position,
@@ -225,16 +225,37 @@ impl Pipeline {
             0,
             bytemuck::bytes_of(&position_uniforms),
         );
+
+        self.section.screen_position = (x + PLAY_HEIGHT as f32, PLAY_HEIGHT as f32);
+        self.section.bounds = (PLAYBACK_WIDTH as f32, PLAY_HEIGHT as f32);
     }
 
-    /// `position` is a number in the range 0-100.
-    pub fn prepare(&mut self, queue: &wgpu::Queue, position: f32) {
-        // TODO: figure out a better way to write this that can also set the text.
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing = playing;
+        // Updates to graphics will be reflected in the next render_pass().
+    }
+
+    pub fn prepare(&mut self, queue: &wgpu::Queue, position: Duration, total_duration: Duration) {
+        // Re-render text based on position
+        self.section.text.clear();
+        self.section.text.push(
+            OwnedText::default()
+                // format as mm:ss.ss, padded with zeros
+                .with_text(format!(
+                    "{:0>2}:{:0>5.2}",
+                    position.as_secs() / 60,
+                    position.as_secs_f32() % 60.0
+                ))
+                .with_scale(FONT_SIZE)
+                .with_color(COLOR_WHITE),
+        );
+
+        let frac = position.as_secs_f32() / total_duration.as_secs_f32();
         queue.write_buffer(
             &self.offset_buffer,
             // write to second slot only
             size_of::<glam::Vec2>() as u64,
-            bytemuck::bytes_of(&glam::vec2(position, 0.0)),
+            bytemuck::bytes_of(&glam::vec2(frac * PLAYBACK_WIDTH as f32, 0.0)),
         );
     }
 
@@ -242,16 +263,13 @@ impl Pipeline {
         pipelines::render_tris(render_pass);
 
         render_shader::set_bind_groups(render_pass, &self.bind_group_play);
-        match self.state {
-            PlayState::Playing => {
-                render_pass.set_vertex_buffer(0, self.vertex_buffer_play.buffer.slice(..));
-                render_pass.draw(0..self.vertex_buffer_play.num_vertices as u32, 0..1);
-            }
-            PlayState::Paused => {
-                render_pass.set_vertex_buffer(0, self.vertex_buffer_pause.buffer.slice(..));
-                render_pass.draw(0..self.vertex_buffer_pause.num_vertices as u32, 0..1);
-            }
-        };
+        if self.playing {
+            render_pass.set_vertex_buffer(0, self.vertex_buffer_play.buffer.slice(..));
+            render_pass.draw(0..self.vertex_buffer_play.num_vertices as u32, 0..1);
+        } else {
+            render_pass.set_vertex_buffer(0, self.vertex_buffer_pause.buffer.slice(..));
+            render_pass.draw(0..self.vertex_buffer_pause.num_vertices as u32, 0..1);
+        }
 
         render_shader::set_bind_groups(render_pass, &self.bind_group_position);
         render_pass.set_vertex_buffer(0, self.vertex_buffer_position.buffer.slice(..));

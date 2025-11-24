@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use rodio::{DeviceTrait, cpal::traits::HostTrait};
+use rodio::{DeviceTrait, Source, cpal::traits::HostTrait};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
@@ -38,10 +38,18 @@ struct State {
 struct Audio {
     output_stream: rodio::OutputStream,
     sink: rodio::Sink,
+    total_duration: Duration,
     // TODO: better naming
     tx: mpsc::SyncSender<()>,
     bins: Arc<Mutex<Vec<f32>>>,
     last_bins: [f32; NUM_BINS],
+}
+
+/// Data that gets rendered on the screen every frame, if playing audio
+struct AudioDisplay {
+    bins: [f32; NUM_BINS],
+    position: Duration,
+    total_duration: Duration,
 }
 
 impl State {
@@ -114,6 +122,9 @@ impl State {
 
             let file = std::fs::File::open(file).expect("could not open music file");
             let source = rodio::Decoder::try_from(file).expect("could not decode music file");
+            let total_duration = source
+                .total_duration()
+                .expect("could not get source duration");
             let (collector, source) = audio::collector::Collector::new(source);
             sink.append(source);
 
@@ -123,6 +134,7 @@ impl State {
             state.audio = Some(Audio {
                 output_stream,
                 sink,
+                total_duration,
                 tx,
                 bins,
                 last_bins: [0.0; NUM_BINS],
@@ -159,7 +171,7 @@ impl State {
         self.configure_surface();
     }
 
-    fn render(&mut self, bins: Option<&[f32; NUM_BINS]>) {
+    fn render(&mut self, data: Option<&AudioDisplay>) {
         // Create texture view
         if let Ok(surface_texture) = self.surface.get_current_texture() {
             self.pipeline.render(
@@ -167,7 +179,7 @@ impl State {
                 &self.queue,
                 &surface_texture.texture,
                 self.surface_format,
-                bins,
+                data,
             );
 
             self.window.pre_present_notify();
@@ -179,30 +191,35 @@ impl State {
     }
 }
 
-impl Audio {
-    fn handle_music_key(&self, key: KeyCode, repeat: bool) -> bool {
+impl State {
+    fn handle_music_key(&mut self, key: KeyCode, repeat: bool) -> bool {
+        let audio = match self.audio.as_mut() {
+            Some(audio) => audio,
+            None => return false,
+        };
         match key {
             KeyCode::F2 => {
-                let pos = self.sink.get_pos();
+                let pos = audio.sink.get_pos();
                 let next_pos = pos.saturating_sub(Duration::from_secs(10));
-                match self.sink.try_seek(next_pos) {
+                match audio.sink.try_seek(next_pos) {
                     Ok(()) => {}
                     Err(err) => eprintln!("Error seeking backwards: {err}"),
                 };
                 true
             }
             KeyCode::F3 if !repeat => {
-                if self.sink.is_paused() {
-                    self.sink.play();
+                if audio.sink.is_paused() {
+                    audio.sink.play();
                 } else {
-                    self.sink.pause();
+                    audio.sink.pause();
                 }
+                self.pipeline.set_playing(!audio.sink.is_paused());
                 true
             }
             KeyCode::F4 => {
-                let pos = self.sink.get_pos();
+                let pos = audio.sink.get_pos();
                 let next_pos = pos.saturating_add(Duration::from_secs(10));
-                match self.sink.try_seek(next_pos) {
+                match audio.sink.try_seek(next_pos) {
                     Ok(()) => {}
                     Err(err) => eprintln!("Error seeking forwards: {err}"),
                 };
@@ -239,8 +256,12 @@ impl ApplicationHandler for App {
                 self.close_requested = true;
             }
             WindowEvent::RedrawRequested => {
-                let bins = state.audio.as_ref().map(|audio| audio.last_bins);
-                state.render(bins.as_ref());
+                let data = state.audio.as_ref().map(|audio| AudioDisplay {
+                    bins: audio.last_bins,
+                    position: audio.sink.get_pos(),
+                    total_duration: audio.total_duration,
+                });
+                state.render(data.as_ref());
 
                 // Request another redraw after this one so we keep a consistent framerate
                 state.get_window().request_redraw();
@@ -292,12 +313,7 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => {
-                if state
-                    .audio
-                    .as_ref()
-                    .map(|audio| audio.handle_music_key(key, repeat))
-                    .unwrap_or(false)
-                {
+                if state.handle_music_key(key, repeat) {
                     return;
                 }
                 state.pipeline.handle_keypress(&state.queue, key);

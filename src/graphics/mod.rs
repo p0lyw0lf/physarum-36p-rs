@@ -1,7 +1,7 @@
 use winit::dpi::PhysicalSize;
 use winit::keyboard::KeyCode;
 
-use crate::audio::NUM_BINS;
+use crate::AudioDisplay;
 use crate::fs::Settings;
 use crate::fs::default_settings;
 
@@ -72,6 +72,10 @@ impl Pipeline {
         out.set_mode(queue, Mode::Normal);
 
         out
+    }
+
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playback.set_playing(playing);
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, new_size: PhysicalSize<u32>) {
@@ -365,20 +369,24 @@ impl Pipeline {
         queue: &wgpu::Queue,
         surface_texture: &wgpu::Texture,
         surface_format: wgpu::TextureFormat,
-        bins: Option<&[f32; NUM_BINS]>,
+        data: Option<&AudioDisplay>,
     ) {
         self.text.prepare(
             device,
             queue,
-            [self.settings_text.section(), self.preset_text.section()],
+            [
+                self.settings_text.section(),
+                self.preset_text.section(),
+                self.playback.section(),
+            ],
         );
-        let render_fft = match bins {
-            Some(bins) => {
-                // TODO: get actual position from location in song
-                self.playback.prepare(queue, 50.0);
-                self.fft_visualizer.prepare(queue, bins);
+        let render_fft = match data {
+            Some(data) => {
+                self.playback
+                    .prepare(queue, data.position, data.total_duration);
+                self.fft_visualizer.prepare(queue, &data.bins);
                 let mut combined_settings = self.settings.base.current.clone();
-                for (bin_settings, scale) in self.settings.fft.iter().zip(bins.iter()) {
+                for (bin_settings, scale) in self.settings.fft.iter().zip(data.bins.iter()) {
                     combined_settings = combined_settings + bin_settings.current.clone() * *scale;
                 }
                 self.physarum.set_settings(queue, &combined_settings.into());

@@ -27,7 +27,7 @@ pub struct Settings {
 }
 
 pub fn write_settings(mut w: impl std::io::Write, settings: &[Settings]) -> std::io::Result<()> {
-    let mut buf = Vec::<u8>::with_capacity(size_of::<Settings>() * settings.len());
+    let mut buf = Vec::<u8>::with_capacity(std::mem::size_of_val(settings));
     facet_json::to_writer(&settings, &mut buf)
         .map_err(|err| std::io::Error::other(format!("{:?}", err)))?;
     w.write_all(&buf)
