@@ -4,7 +4,7 @@ use wgpu_text::glyph_brush::OwnedText;
 use wgpu_text::glyph_brush::Section;
 use winit::dpi::PhysicalSize;
 
-use crate::constants::HEADER_HEIGHT;
+use crate::constants::{FFT_WIDTH, HEADER_HEIGHT, PLAYBACK_WIDTH};
 use crate::fs::{DisplaySettings, PointSettings};
 use crate::graphics::Mode;
 use crate::graphics::Param;
@@ -148,7 +148,10 @@ impl Text {
     }
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        self.section.bounds = (new_size.width as f32, HEADER_HEIGHT as f32);
+        self.section.bounds = (
+            (new_size.width - PLAYBACK_WIDTH - FFT_WIDTH) as f32,
+            HEADER_HEIGHT as f32,
+        );
         self.section.screen_position = (0.0, 0.0);
     }
 

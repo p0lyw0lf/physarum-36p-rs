@@ -6,6 +6,9 @@ use wgpu_text::glyph_brush::OwnedSection;
 use wgpu_text::glyph_brush::Section;
 use winit::dpi::PhysicalSize;
 
+use crate::constants::FFT_WIDTH;
+use crate::constants::HEADER_HEIGHT;
+use crate::constants::PLAYBACK_WIDTH;
 use crate::graphics::camera_2d;
 use crate::graphics::geometry_2d::ToVertices;
 use crate::graphics::geometry_2d::Triangle;
@@ -15,6 +18,9 @@ use crate::graphics::geometry_2d::make_line;
 use crate::graphics::geometry_2d::vertex_buffer_from_geometry;
 use crate::graphics::text::COLOR_WHITE;
 use crate::shaders::{pipelines, tris_render_shader as render_shader};
+
+const POSITION_HEIGHT: u32 = 6;
+const PLAY_HEIGHT: u32 = HEADER_HEIGHT - POSITION_HEIGHT - 6;
 
 enum PlayState {
     Playing,
@@ -82,13 +88,18 @@ impl Pipeline {
             .flat_map(|line| line.to_vertices((0, 0))),
         );
         // Construct the position line/seek head
+        let y_mid = POSITION_HEIGHT as f32 * 0.5;
         let vertex_buffer_position = vertex_buffer_from_geometry(
             device,
             queue,
             "position vertex buffer",
-            make_line(glam::vec2(0.0, 3.0), glam::vec2(100.0, 3.0), 2.0)
-                .to_vertices((0, 0))
-                .chain(make_circle(glam::vec2(0.0, 3.0), 0.0, 3.0).to_vertices(1)),
+            make_line(
+                glam::vec2(0.0, y_mid),
+                glam::vec2(PLAYBACK_WIDTH as f32, y_mid),
+                2.0,
+            )
+            .to_vertices((0, 0))
+            .chain(make_circle(glam::vec2(0.0, y_mid), 0.0, 3.0).to_vertices(1)),
         );
 
         // The pervious geometry created exactly 2 indexes that we need to fill with colors and
@@ -171,18 +182,19 @@ impl Pipeline {
     }
 
     pub fn resize(&mut self, queue: &wgpu::Queue, size: PhysicalSize<u32>) {
+        let x = (size.width - FFT_WIDTH - PLAYBACK_WIDTH) as f32;
+
         let play_uniforms: render_shader::Uniforms = camera_2d::Uniforms::source_to_screen(
             size.into(),
             camera_2d::SourceRect {
                 width: 1.0,
                 height: 1.0,
             },
-            // TODO: real position
             camera_2d::DestinationRect {
-                x: 0.0,
+                x,
                 y: 0.0,
-                width: 100.0,
-                height: 100.0,
+                width: PLAY_HEIGHT as f32,
+                height: PLAY_HEIGHT as f32,
             },
             camera_2d::Mode::Fit,
         )
@@ -196,15 +208,14 @@ impl Pipeline {
         let position_uniforms: render_shader::Uniforms = camera_2d::Uniforms::source_to_screen(
             size.into(),
             camera_2d::SourceRect {
-                width: 100.0,
-                height: 6.0,
+                width: PLAYBACK_WIDTH as f32,
+                height: POSITION_HEIGHT as f32,
             },
-            // TODO: real position
             camera_2d::DestinationRect {
-                x: 100.0,
-                y: 0.0,
-                width: 100.0,
-                height: 6.0,
+                x,
+                y: (PLAY_HEIGHT + 3) as f32,
+                width: PLAYBACK_WIDTH as f32,
+                height: POSITION_HEIGHT as f32,
             },
             camera_2d::Mode::Fit,
         )

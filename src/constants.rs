@@ -3,7 +3,9 @@ use crate::shaders::compute_shader::Constants;
 use crate::shaders::compute_shader::PointSettings;
 
 pub const HEADER_HEIGHT: u32 = 60;
-pub const FFT_WIDTH: u32 = HEADER_HEIGHT * NUM_BINS as u32;
+pub const FFT_BIN_WIDTH: u32 = 60;
+pub const FFT_WIDTH: u32 = FFT_BIN_WIDTH * NUM_BINS as u32;
+pub const PLAYBACK_WIDTH: u32 = 300;
 
 pub const SIMULATION_WIDTH: u32 = 1280;
 pub const SIMULATION_HEIGHT: u32 = 736;

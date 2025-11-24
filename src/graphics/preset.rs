@@ -5,6 +5,7 @@ use wgpu_text::glyph_brush::OwnedText;
 use wgpu_text::glyph_brush::Section;
 use winit::dpi::PhysicalSize;
 
+use crate::constants::PLAYBACK_WIDTH;
 use crate::constants::{FFT_WIDTH, HEADER_HEIGHT};
 use crate::graphics::text::{COLOR_WHITE, FONT_SIZE};
 
@@ -32,9 +33,8 @@ impl Text {
     }
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        let width = (new_size.width - FFT_WIDTH - 10) as f32;
-        self.section.bounds = (width, HEADER_HEIGHT as f32);
-        self.section.screen_position = (width, 0.0);
+        self.section.bounds = (PLAYBACK_WIDTH as f32, HEADER_HEIGHT as f32);
+        self.section.screen_position = ((new_size.width - FFT_WIDTH) as f32, 0.0);
     }
 
     pub fn set_index(&mut self, index: usize) {

@@ -2,7 +2,7 @@ use winit::dpi::PhysicalSize;
 
 use crate::{
     audio::NUM_BINS,
-    constants::{FFT_WIDTH, HEADER_HEIGHT},
+    constants::{FFT_BIN_WIDTH, FFT_WIDTH, HEADER_HEIGHT},
     graphics::{
         Mode, camera_2d,
         geometry_2d::{
@@ -42,20 +42,21 @@ impl Pipeline {
             queue,
             "fft vertex buffer",
             (0..NUM_BINS).flat_map(|i| -> Box<dyn Iterator<Item = render_shader::Vertex>> {
+                const W: f32 = FFT_BIN_WIDTH as f32;
                 const H: f32 = HEADER_HEIGHT as f32;
 
                 let i = i as u32;
                 let x = i as f32;
 
                 // add circle in this bin
-                let center = glam::vec2(H * x + H / 2.0, H - 10.0);
+                let center = glam::vec2(W * x + W / 2.0, H - 10.0);
                 let circle = make_circle(center, 8.0, 10.0);
                 let circle = circle.to_vertices(i);
 
                 if i > 0 {
                     // add line from previous circle
                     let h = i - 1;
-                    let prev_center = center - glam::vec2(H, 0.0);
+                    let prev_center = center - glam::vec2(W, 0.0);
                     let line = make_line(prev_center, center, 1.0);
                     Box::new(circle.chain(line.to_vertices((h, i))))
                 } else {
