@@ -5,9 +5,8 @@ use wgpu_text::glyph_brush::Section;
 use winit::dpi::PhysicalSize;
 
 use crate::constants::{FFT_WIDTH, HEADER_HEIGHT, PLAYBACK_WIDTH};
-use crate::fs::{DisplaySettings, PointSettings};
+use crate::fs::{point_settings::PointSettings, settings::DisplaySettings, settings::Param};
 use crate::graphics::Mode;
-use crate::graphics::Param;
 use crate::graphics::text::COLOR_GREEN;
 use crate::graphics::text::COLOR_RED;
 use crate::graphics::text::COLOR_WHITE;

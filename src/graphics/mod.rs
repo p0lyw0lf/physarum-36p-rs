@@ -2,8 +2,8 @@ use winit::dpi::PhysicalSize;
 use winit::keyboard::KeyCode;
 
 use crate::AudioDisplay;
-use crate::fs::Settings;
-use crate::fs::default_settings;
+use crate::fs::AllSettings;
+use crate::fs::settings;
 
 mod camera_2d;
 mod fft;
@@ -11,38 +11,33 @@ mod geometry_2d;
 mod physarum;
 mod playback;
 mod preset;
-mod settings;
+#[path = "./settings.rs"]
+mod settings_display;
 mod text;
 
 #[derive(Copy, Clone)]
 pub enum Mode {
     Normal,
-    Base(Param),
+    Base(settings::Param),
     Fft {
         /// The parameter we're currently changing, if any
-        param: Option<Param>,
+        param: Option<settings::Param>,
         /// Which FFT bin we're changing for. MUST be in the range 0..NUM_BINS
-        index: BinIndex,
+        index: settings::BinIndex,
     },
 }
 
 pub struct Pipeline {
     mode: Mode,
-    /// The settings we are currently acting on. Needs to be manually written to settings_presets.
-    settings: Settings,
-    /// The list of pre-made settings that we can pull from.
-    settings_presets: Vec<Settings>,
-    /// The setting preset we last pulled from. Can be used to go to the next/previous preset, to
-    /// write to the current preset, or to insert a new preset after the given index.
-    /// MUST be in the range 0..settings_presets.len()
-    settings_index: usize,
+
+    settings: AllSettings,
 
     playback: playback::Pipeline,
     fft_visualizer: fft::Pipeline,
     physarum: physarum::Pipeline,
 
     text: text::Pipeline,
-    settings_text: settings::Text,
+    settings_text: settings_display::Text,
     preset_text: preset::Text,
 }
 
@@ -53,22 +48,19 @@ impl Pipeline {
         size: PhysicalSize<u32>,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        // TODO: read from file
-        let settings_presets = default_settings();
         let mut out = Self {
             mode: Mode::Normal,
-            settings: settings_presets[0].clone(),
-            settings_presets,
-            settings_index: 0,
+            // TODO: read from file
+            settings: AllSettings::default(),
             playback: playback::Pipeline::new(device, queue, surface_format),
             fft_visualizer: fft::Pipeline::new(device, queue, surface_format),
             physarum: physarum::Pipeline::new(device, queue, surface_format),
             text: text::Pipeline::new(device, size, surface_format),
-            settings_text: settings::Text::new(),
+            settings_text: settings_display::Text::new(),
             preset_text: preset::Text::new(),
         };
 
-        out.set_settings_index(0);
+        out.set_preset_text();
         out.set_mode(queue, Mode::Normal);
 
         out
@@ -93,26 +85,30 @@ impl Pipeline {
             return;
         }
 
-        if self.handle_preset_keypress(key) {
+        if self.settings.handle_keypress(key) {
+            self.set_settings_text();
+            self.set_preset_text();
             return;
         }
 
         use Mode::*;
         match self.mode {
             Normal => {
-                if let Some(param) = Param::activate(key) {
+                if let Some(param) = settings::Param::activate(key) {
                     self.set_mode(queue, Base(param));
                     return;
                 }
-                if let Some(index) = BinIndex::activate(key) {
+                if let Some(index) = settings::BinIndex::activate(key) {
                     self.set_mode(queue, Fft { param: None, index });
                 }
             }
             Base(param) => {
-                if param.apply_to_base(self, key) {
+                if self.settings.handle_base_keypress(param, key) {
+                    self.set_settings_text();
+                    self.set_preset_text();
                     return;
                 }
-                if let Some(new_param) = Param::activate(key) {
+                if let Some(new_param) = settings::Param::activate(key) {
                     if new_param == param {
                         self.set_mode(queue, Normal);
                     } else {
@@ -120,7 +116,7 @@ impl Pipeline {
                     }
                     return;
                 }
-                if let Some(index) = BinIndex::activate(key) {
+                if let Some(index) = settings::BinIndex::activate(key) {
                     self.set_mode(
                         queue,
                         Fft {
@@ -132,11 +128,13 @@ impl Pipeline {
             }
             Fft { param, index } => {
                 if let Some(param) = param
-                    && param.apply_to_fft(self, key, index)
+                    && self.settings.handle_fft_keypress(param, index, key)
                 {
+                    self.set_settings_text();
+                    self.set_preset_text();
                     return;
                 }
-                if let Some(new_param) = Param::activate(key) {
+                if let Some(new_param) = settings::Param::activate(key) {
                     if Some(new_param) == param {
                         self.set_mode(queue, Fft { param: None, index });
                     } else {
@@ -150,7 +148,7 @@ impl Pipeline {
                     }
                     return;
                 }
-                if let Some(new_index) = BinIndex::activate(key) {
+                if let Some(new_index) = settings::BinIndex::activate(key) {
                     if new_index == index {
                         self.set_mode(
                             queue,
@@ -173,230 +171,27 @@ impl Pipeline {
         }
     }
 
-    /// Handles all the keypresses that have to do with manipulating setting presets.
-    /// Returns true if the key was handled.
-    fn handle_preset_keypress(&mut self, key: KeyCode) -> bool {
-        match key {
-            KeyCode::BracketLeft => {
-                // Go to previous preset
-                let next_index = if self.settings_index == 0 {
-                    self.settings_presets.len() - 1
-                } else {
-                    self.settings_index - 1
-                };
-                self.set_settings_index(next_index);
-                true
-            }
-            KeyCode::BracketRight => {
-                // Go to next preset
-                let next_index = if self.settings_index == self.settings_presets.len() - 1 {
-                    0
-                } else {
-                    self.settings_index + 1
-                };
-                self.set_settings_index(next_index);
-                true
-            }
-            KeyCode::Enter => {
-                // Save settings to current preset
-                self.settings_presets[self.settings_index] = self.settings.clone();
-                self.preset_text.set_dirty(false);
-                true
-            }
-            KeyCode::F1 => {
-                // Create new preset after the current one, duplicating the current settings
-                self.settings_index += 1;
-                self.settings_presets
-                    .insert(self.settings_index, self.settings.clone());
-                self.preset_text.set_dirty(false);
-                true
-            }
-            KeyCode::F5 => {
-                // Reset current settings to default for the preset
-                self.settings = self.settings_presets[self.settings_index].clone();
-                self.set_settings();
-                true
-            }
-            KeyCode::F9 if self.settings_presets.len() > 1 => {
-                // Delete the current preset, if we can
-                self.settings_presets.remove(self.settings_index);
-                self.settings_index =
-                    std::cmp::min(self.settings_index, self.settings_presets.len() - 1);
-                self.set_settings_index(self.settings_index);
-                true
-            }
-            KeyCode::Slash => {
-                // Randomize current settings
-                self.settings = Settings::random();
-                self.set_settings();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn set_settings_index(&mut self, index: usize) {
-        self.settings_index = index;
-        self.settings = self.settings_presets[self.settings_index].clone();
-        self.preset_text.set_index(index);
-        self.set_settings();
-        self.preset_text.set_dirty(false);
-    }
-
-    /// Called whenever `self.settings` is updated, to notify anything that renders based on it.
-    fn set_settings(&mut self) {
-        // Don't need to call self.physarum.set_settings(), that is called every frame with the
-        // latest settings anyways.
-        self.set_text_settings();
-        self.preset_text.set_dirty(true);
-    }
-
-    fn set_text_settings(&mut self) {
+    fn set_settings_text(&mut self) {
         let display_settings = match self.mode {
-            Mode::Normal | Mode::Base(_) => &self.settings.base,
-            Mode::Fft { index, param: _ } => &self.settings.fft[index.0],
+            Mode::Normal | Mode::Base(_) => &self.settings.get_settings().base,
+            Mode::Fft { index, param: _ } => &self.settings.get_settings().fft[index.0],
         };
         self.settings_text.set_settings(display_settings);
+    }
+
+    fn set_preset_text(&mut self) {
+        // TODO: collapse these into one call now that we always modify them together.
+        self.preset_text.set_index(self.settings.get_index());
+        self.preset_text.set_dirty(self.settings.get_dirty());
     }
 
     fn set_mode(&mut self, queue: &wgpu::Queue, new_mode: Mode) {
         self.mode = new_mode;
         self.settings_text.set_mode(self.mode);
-        self.set_text_settings();
+        self.set_settings_text();
         self.fft_visualizer.set_mode(queue, self.mode);
     }
 }
-
-macro_rules! param_enum {
-    (pub enum $name:ident { $(
-        $case:ident = $param:ident = $key:ident,
-    )* }) => {
-        #[derive(Copy, Clone, PartialEq, Eq)]
-        pub enum $name {
-            $($case,)*
-        }
-
-        impl $name {
-            // Returns whether this has handled the keypress
-            fn apply_to_base(&self, state: &mut Pipeline, key: KeyCode) -> bool {
-                match self { $(
-                    $name::$case => {
-                        match key {
-                            KeyCode::ArrowUp => {
-                                state.settings.base.current.$param += state.settings.base.increment.$param;
-                                state.set_settings();
-                            }
-                            KeyCode::ArrowDown => {
-                                state.settings.base.current.$param -= state.settings.base.increment.$param;
-                                state.set_settings();
-                            }
-                            KeyCode::ArrowLeft if state.settings.base.increment.$param < 100.0 => {
-                                state.settings.base.increment.$param *= 10.0;
-                                state.set_settings();
-                            }
-                            KeyCode::ArrowRight if state.settings.base.increment.$param > 0.001 => {
-                                state.settings.base.increment.$param /= 10.0;
-                                state.set_settings();
-                            }
-                            _ => return false,
-                        };
-                        true
-                    }
-                )* }
-            }
-
-            // Returns whether this has handled the keypress
-            fn apply_to_fft(&self, state: &mut Pipeline, key: KeyCode, index: BinIndex) -> bool {
-                let display_settings = &mut state.settings.fft[index.0];
-                match self { $(
-                    $name::$case => {
-                        match key {
-                            KeyCode::ArrowUp => {
-                                display_settings.current.$param += display_settings.increment.$param;
-                                state.set_settings();
-                            }
-                            KeyCode::ArrowDown => {
-                                display_settings.current.$param -= display_settings.increment.$param;
-                                state.set_settings();
-                            }
-                            KeyCode::ArrowLeft if display_settings.increment.$param < 100.0 => {
-                                display_settings.increment.$param *= 10.0;
-                                state.set_settings();
-                            }
-                            KeyCode::ArrowRight if display_settings.increment.$param > 0.001 => {
-                                display_settings.increment.$param /= 10.0;
-                                state.set_settings();
-                            }
-                            _ => return false,
-                        };
-                        true
-                    }
-                )* }
-            }
-
-            fn activate(key: KeyCode) -> Option<Self> {
-                match key { $(
-                    KeyCode::$key => Some($name::$case),
-                )*
-                    _ => None
-                }
-            }
-        }
-    }
-}
-
-param_enum!(
-    // Use the block in the left-hand side of the keyboard, exactly corresponding to where the
-    // parameters will be rendered on the screen.
-    pub enum Param {
-        SDBase = sd0 = KeyQ,
-        SDAmplitude = sda = KeyA,
-        SDExponent = sde = KeyZ,
-        SABase = sa0 = KeyW,
-        SAAmplitude = saa = KeyS,
-        SAExponent = sae = KeyX,
-        RABase = ra0 = KeyE,
-        RAAmplitude = raa = KeyD,
-        RAExponent = rae = KeyC,
-        MDBase = md0 = KeyR,
-        MDAmplitude = mda = KeyF,
-        MDExponent = mde = KeyV,
-        DefaultScalingFactor = dsf = KeyT,
-        SensorBias1 = sb1 = KeyG,
-        SensorBias2 = sb2 = KeyB,
-    }
-);
-
-macro_rules! bin_indices {
-    (pub struct $name:ident { $(
-        $index:literal = $key:ident,
-    )* }) => {
-        #[derive(Copy, Clone, PartialEq, Eq)]
-        pub struct $name(pub usize);
-
-        impl $name {
-            fn activate(key: KeyCode) -> Option<Self> {
-                match key { $(
-                    KeyCode::$key => Some(Self($index)),
-                )*
-                    _ => None,
-                }
-            }
-        }
-    };
-}
-
-bin_indices!(
-    // Use the top row to the right of the param block, again corresponding to where the bin will be
-    // displayed on the screen.
-    pub struct BinIndex {
-        0 = KeyY,
-        1 = KeyU,
-        2 = KeyI,
-        3 = KeyO,
-        4 = KeyP,
-    }
-);
 
 impl Pipeline {
     pub fn render(
@@ -421,16 +216,24 @@ impl Pipeline {
                 self.playback
                     .prepare(queue, data.position, data.total_duration);
                 self.fft_visualizer.prepare(queue, &data.bins);
-                let mut combined_settings = self.settings.base.current.clone();
-                for (bin_settings, scale) in self.settings.fft.iter().zip(data.bins.iter()) {
+                let mut combined_settings = self.settings.get_settings().base.current.clone();
+                for (bin_settings, scale) in self
+                    .settings
+                    .get_settings()
+                    .fft
+                    .iter()
+                    .zip(data.bins.iter())
+                {
                     combined_settings = combined_settings + bin_settings.current.clone() * *scale;
                 }
                 self.physarum.set_settings(queue, &combined_settings.into());
                 true
             }
             None => {
-                self.physarum
-                    .set_settings(queue, &self.settings.base.current.clone().into());
+                self.physarum.set_settings(
+                    queue,
+                    &self.settings.get_settings().base.current.clone().into(),
+                );
                 false
             }
         };

@@ -14,7 +14,7 @@ macro_rules! point_settings {
             pub fn random_base() -> Self {
                 let mut rng = rand::rng();
                 Self { $(
-                    $to: super::sample_base_setting(&mut rng),
+                    $to: crate::fs::settings::sample_base_setting(&mut rng),
                 )* }
             }
         }
