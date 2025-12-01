@@ -4,14 +4,6 @@ Simplified wgpu implementation of [36 Points](https://www.sagejenson.com/36point
 
 Works best on fullscreen 1920x1080 window. Press F11 to toggle fullscreen.
 
-TODO:
-+ [x] Ability to modify current point settings
-+ [x] Ability to switch between default point settings
-+ [x] Ability to sync changes in point settings to different parts of the
-      music's frequency band amplitudes.
-+ [x] Ability to play/pause music
-+ [ ] Ability to save/load default point settings
-
 ## Keybinds
 
 ### Modifying Current Point Setting
@@ -43,6 +35,14 @@ On a US English keyboard, press the left/right bracket keys `[]`. There will be
 a number next to the point settings that show what preset you're on. If the
 settings have been modified from the preset, a `*` will show next to the
 indicator.
+
+### Creating New Default Point Settings
+
+* Enter: Save current settings as default for the selected preset.
+* F1: Create new preset number, inserted after the current one.
+* F5: Reset current settings to default for the preset.
+* F9: Delete current preset.
+* `/`: Randomize current settings.
 
 ### Automatically Modifying With Music
 

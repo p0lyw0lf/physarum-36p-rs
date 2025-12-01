@@ -178,6 +178,7 @@ impl Pipeline {
     fn handle_preset_keypress(&mut self, key: KeyCode) -> bool {
         match key {
             KeyCode::BracketLeft => {
+                // Go to previous preset
                 let next_index = if self.settings_index == 0 {
                     self.settings_presets.len() - 1
                 } else {
@@ -187,12 +188,47 @@ impl Pipeline {
                 true
             }
             KeyCode::BracketRight => {
+                // Go to next preset
                 let next_index = if self.settings_index == self.settings_presets.len() - 1 {
                     0
                 } else {
                     self.settings_index + 1
                 };
                 self.set_settings_index(next_index);
+                true
+            }
+            KeyCode::Enter => {
+                // Save settings to current preset
+                self.settings_presets[self.settings_index] = self.settings.clone();
+                self.preset_text.set_dirty(false);
+                true
+            }
+            KeyCode::F1 => {
+                // Create new preset after the current one, duplicating the current settings
+                self.settings_index += 1;
+                self.settings_presets
+                    .insert(self.settings_index, self.settings.clone());
+                self.preset_text.set_dirty(false);
+                true
+            }
+            KeyCode::F5 => {
+                // Reset current settings to default for the preset
+                self.settings = self.settings_presets[self.settings_index].clone();
+                self.set_settings();
+                true
+            }
+            KeyCode::F9 if self.settings_presets.len() > 1 => {
+                // Delete the current preset, if we can
+                self.settings_presets.remove(self.settings_index);
+                self.settings_index =
+                    std::cmp::min(self.settings_index, self.settings_presets.len() - 1);
+                self.set_settings_index(self.settings_index);
+                true
+            }
+            KeyCode::Slash => {
+                // Randomize current settings
+                self.settings = Settings::random();
+                self.set_settings();
                 true
             }
             _ => false,

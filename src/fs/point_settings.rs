@@ -10,6 +10,15 @@ macro_rules! point_settings {
             pub $to: f32,
         )* }
 
+        impl $name {
+            pub fn random_base() -> Self {
+                let mut rng = rand::rng();
+                Self { $(
+                    $to: super::sample_base_setting(&mut rng),
+                )* }
+            }
+        }
+
         impl From<compute_shader::PointSettings> for $name {
             fn from(s: compute_shader::PointSettings) -> Self {
                 Self { $(

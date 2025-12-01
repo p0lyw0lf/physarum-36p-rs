@@ -55,3 +55,40 @@ pub fn default_settings() -> Vec<Settings> {
         })
         .collect()
 }
+
+/// Creates an entirely random set of settings. Based on my own work.
+impl Settings {
+    pub fn random() -> Self {
+        Self {
+            base: DisplaySettings {
+                current: PointSettings::random_base(),
+                increment: constants::DEFAULT_INCREMENT_SETTINGS.into(),
+            },
+            fft: std::array::repeat(DisplaySettings {
+                current: compute_shader::PointSettings::zeroed().into(),
+                increment: constants::DEFAULT_INCREMENT_SETTINGS.into(),
+            }),
+        }
+    }
+}
+
+/// Uses a custom probability CDF to get a point. Tuned for "pretty good" results, often requires
+/// putting paramters into out-of-range places.
+fn sample_base_setting(rng: &mut impl rand::Rng) -> f32 {
+    let decision: f32 = rng.random_range(0.0..1.0);
+    if decision < 0.3 {
+        0.0
+    } else if decision < 0.93 {
+        // exponential distribution with λ = 1
+        // CDF = λe^-λx => inverse CDF = -ln(c/λ)/λ
+        // sample a value in range (0, 1], so we don't have to worry about log(0)
+        const LAMBDA: f32 = 1.0;
+        let cdf: f32 = -rng.random_range(-1.0..0.0);
+        -f32::ln(cdf / LAMBDA) / LAMBDA
+    } else {
+        // exponential distrubiton with λ = 2, for the negative numbers
+        const LAMBDA: f32 = 2.0;
+        let cdf: f32 = -rng.random_range(-1.0..0.0);
+        f32::ln(cdf / LAMBDA) / LAMBDA
+    }
+}
