@@ -36,7 +36,8 @@ struct State {
 }
 
 struct Audio {
-    output_stream: rodio::OutputStream,
+    // We're required to keep ownership of this so that the audio continues playing
+    _output_stream: rodio::OutputStream,
     sink: rodio::Sink,
     total_duration: Duration,
     // TODO: better naming
@@ -74,7 +75,10 @@ impl State {
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
 
-        let pipeline = graphics::Pipeline::new(&device, &queue, size, surface_format);
+        let settings_filename = flags.settings.clone().unwrap_or("settings.json".into());
+        let mut pipeline = graphics::Pipeline::new(&device, &queue, size, surface_format);
+        pipeline.read_settings_file(&queue, settings_filename);
+        let pipeline = pipeline;
 
         let mut state = State {
             window,
@@ -132,7 +136,7 @@ impl State {
             std::thread::spawn(move || worker.work());
 
             state.audio = Some(Audio {
-                output_stream,
+                _output_stream: output_stream,
                 sink,
                 total_duration,
                 tx,
@@ -335,6 +339,7 @@ mod flags {
     xflags::xflags! {
         cmd main {
             optional --music file: PathBuf
+            optional --settings file: PathBuf
         }
     }
 }

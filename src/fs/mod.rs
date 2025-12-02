@@ -1,14 +1,16 @@
 //! This module contains utilities to read & write settings data to files. How this works is we
 //! define a custom file format, which is just a JSON file containing an array of our settings.
 
+use std::path::PathBuf;
+
+use bytemuck::Zeroable;
+use winit::keyboard::KeyCode;
+
 use crate::fs::settings::BinIndex;
 use crate::fs::settings::DisplaySettings;
 use crate::fs::settings::Param;
 use crate::fs::settings::Settings;
 use crate::{constants, shaders::compute_shader};
-
-use bytemuck::Zeroable;
-use winit::keyboard::KeyCode;
 
 pub mod point_settings;
 pub mod settings;
@@ -29,6 +31,8 @@ fn read_settings(mut r: impl std::io::Read) -> std::io::Result<Vec<Settings>> {
 /// These are the collection of all settings that can be loaded into memory at once. Only
 /// `presets` is ever persisted to disk.
 pub struct AllSettings {
+    /// Where we should persist our settings to disk.
+    pub filename: Option<PathBuf>,
     /// The settings we are currently acting on. Needs to be manually written to presets.
     settings: Settings,
     /// The list of pre-made settings that we can pull from.
@@ -42,12 +46,9 @@ pub struct AllSettings {
 }
 
 impl AllSettings {
-    fn write(&self, w: impl std::io::Write) -> std::io::Result<()> {
-        write_settings(w, &self.presets)
-    }
-
     fn from_presets(presets: Vec<Settings>) -> Self {
         Self {
+            filename: None,
             settings: presets[0].clone(),
             presets,
             index: 0,
@@ -55,8 +56,31 @@ impl AllSettings {
         }
     }
 
-    fn read(r: impl std::io::Read) -> std::io::Result<Self> {
-        Ok(Self::from_presets(read_settings(r)?))
+    fn write(&self) -> std::io::Result<()> {
+        let filename = match self.filename.as_ref() {
+            Some(filename) => filename,
+            None => return Ok(()),
+        };
+
+        let file = std::fs::File::create(filename)?;
+        write_settings(file, &self.presets)
+    }
+
+    fn read(path: PathBuf) -> std::io::Result<Self> {
+        let file = std::fs::File::open(&path)?;
+        let presets = read_settings(file)?;
+
+        let mut out = Self::from_presets(presets);
+        out.filename = Some(path);
+        Ok(out)
+    }
+
+    pub fn read_or_default(path: PathBuf) -> Self {
+        Self::read(path).unwrap_or_else(|e| {
+            eprintln!("Error loading settings: {e}");
+            eprintln!("Falling back to default settings...");
+            Self::default()
+        })
     }
 }
 
@@ -119,13 +143,13 @@ impl AllSettings {
             KeyCode::Enter => {
                 // Save settings to current preset
                 self.presets[self.index] = self.settings.clone();
-                self.dirty = false;
+                self.save_settings();
             }
             KeyCode::F1 => {
                 // Create new preset after the current one, duplicating the current settings
                 self.index += 1;
                 self.presets.insert(self.index, self.settings.clone());
-                self.dirty = false;
+                self.save_settings();
             }
             KeyCode::F5 => {
                 // Reset current settings to default for the preset
@@ -148,6 +172,21 @@ impl AllSettings {
         true
     }
 
+    fn save_settings(&mut self) {
+        match self.write() {
+            Ok(()) => {
+                self.dirty = false;
+            }
+            Err(e) => eprintln!("Error saving file: {e}"),
+        }
+    }
+
+    fn set_index(&mut self, index: usize) {
+        self.index = index;
+        self.settings = self.presets[self.index].clone();
+        self.dirty = false;
+    }
+
     pub fn handle_base_keypress(&mut self, param: Param, key: KeyCode) -> bool {
         let out = param.apply(&mut self.settings.base, key);
         if out {
@@ -162,11 +201,5 @@ impl AllSettings {
             self.dirty = true;
         }
         out
-    }
-
-    fn set_index(&mut self, index: usize) {
-        self.index = index;
-        self.settings = self.presets[self.index].clone();
-        self.dirty = false;
     }
 }

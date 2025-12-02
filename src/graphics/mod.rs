@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use winit::dpi::PhysicalSize;
 use winit::keyboard::KeyCode;
 
@@ -50,7 +52,6 @@ impl Pipeline {
     ) -> Self {
         let mut out = Self {
             mode: Mode::Normal,
-            // TODO: read from file
             settings: AllSettings::default(),
             playback: playback::Pipeline::new(device, queue, surface_format),
             fft_visualizer: fft::Pipeline::new(device, queue, surface_format),
@@ -64,6 +65,12 @@ impl Pipeline {
         out.set_mode(queue, Mode::Normal);
 
         out
+    }
+
+    pub fn read_settings_file(&mut self, queue: &wgpu::Queue, path: PathBuf) {
+        self.settings = AllSettings::read_or_default(path);
+        self.set_preset_text();
+        self.set_mode(queue, Mode::Normal);
     }
 
     pub fn set_playing(&mut self, playing: bool) {
