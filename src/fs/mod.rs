@@ -59,7 +59,10 @@ impl AllSettings {
     fn write(&self) -> std::io::Result<()> {
         let filename = match self.filename.as_ref() {
             Some(filename) => filename,
-            None => return Ok(()),
+            None => {
+                eprintln!("No filename, not saving...");
+                return Ok(());
+            }
         };
 
         let file = std::fs::File::create(filename)?;
@@ -70,17 +73,20 @@ impl AllSettings {
         let file = std::fs::File::open(&path)?;
         let presets = read_settings(file)?;
 
-        let mut out = Self::from_presets(presets);
-        out.filename = Some(path);
-        Ok(out)
+        Ok(Self::from_presets(presets).with_filename(path))
     }
 
     pub fn read_or_default(path: PathBuf) -> Self {
-        Self::read(path).unwrap_or_else(|e| {
+        Self::read(path.clone()).unwrap_or_else(|e| {
             eprintln!("Error loading settings: {e}");
             eprintln!("Falling back to default settings...");
-            Self::default()
+            Self::default().with_filename(path)
         })
+    }
+
+    pub fn with_filename(mut self, path: PathBuf) -> Self {
+        self.filename = Some(path);
+        self
     }
 }
 
