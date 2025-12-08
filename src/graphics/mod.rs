@@ -20,6 +20,7 @@ mod text;
 #[derive(Copy, Clone)]
 pub enum Mode {
     Normal,
+    EnteringNumber(usize),
     Base(settings::Param),
     Fft {
         /// The parameter we're currently changing, if any
@@ -61,7 +62,6 @@ impl Pipeline {
             preset_text: preset::Text::new(),
         };
 
-        out.set_preset_text();
         out.set_mode(queue, Mode::Normal);
 
         out
@@ -69,7 +69,6 @@ impl Pipeline {
 
     pub fn read_settings_file(&mut self, queue: &wgpu::Queue, path: PathBuf) {
         self.settings = AllSettings::read_or_default(path);
-        self.set_preset_text();
         self.set_mode(queue, Mode::Normal);
     }
 
@@ -101,12 +100,37 @@ impl Pipeline {
         use Mode::*;
         match self.mode {
             Normal => {
+                if let Some(digit) = key_to_digit(key) {
+                    self.set_mode(queue, EnteringNumber(digit));
+                    return;
+                }
                 if let Some(param) = settings::Param::activate(key) {
                     self.set_mode(queue, Base(param));
                     return;
                 }
                 if let Some(index) = settings::BinIndex::activate(key) {
                     self.set_mode(queue, Fft { param: None, index });
+                }
+            }
+            EnteringNumber(current_number) => {
+                if let Some(new_digit) = key_to_digit(key) {
+                    let new_number = current_number * 10 + new_digit;
+                    self.set_mode(queue, EnteringNumber(new_number));
+                    return;
+                }
+                match key {
+                    KeyCode::Equal => {
+                        // Activate the currently highlighted preset
+                        self.settings.set_index(current_number.saturating_sub(1));
+                        self.set_mode(queue, Normal);
+                    }
+                    KeyCode::Backspace => {
+                        // Delete the last digit
+                        let new_number = current_number / 10;
+                        self.set_mode(queue, EnteringNumber(new_number));
+                    }
+                    // Ignore all other keypresses
+                    _ => {}
                 }
             }
             Base(param) => {
@@ -180,22 +204,38 @@ impl Pipeline {
 
     fn set_settings_text(&mut self) {
         let display_settings = match self.mode {
-            Mode::Normal | Mode::Base(_) => &self.settings.get_settings().base,
+            Mode::Normal | Mode::EnteringNumber(_) | Mode::Base(_) => {
+                &self.settings.get_settings().base
+            }
             Mode::Fft { index, param: _ } => &self.settings.get_settings().fft[index.0],
         };
         self.settings_text.set_settings(display_settings);
     }
 
     fn set_preset_text(&mut self) {
-        // TODO: collapse these into one call now that we always modify them together.
-        self.preset_text.set_index(self.settings.get_index());
-        self.preset_text.set_dirty(self.settings.get_dirty());
+        match self.mode {
+            Mode::Normal | Mode::Base(_) | Mode::Fft { .. } => {
+                self.preset_text.update(
+                    self.settings.get_index(),
+                    if self.settings.get_dirty() {
+                        preset::PresetMode::Dirty
+                    } else {
+                        preset::PresetMode::Normal
+                    },
+                );
+            }
+            Mode::EnteringNumber(number) => {
+                self.preset_text
+                    .update(number.saturating_sub(1), preset::PresetMode::Selecting);
+            }
+        }
     }
 
     fn set_mode(&mut self, queue: &wgpu::Queue, new_mode: Mode) {
         self.mode = new_mode;
         self.settings_text.set_mode(self.mode);
         self.set_settings_text();
+        self.set_preset_text();
         self.fft_visualizer.set_mode(queue, self.mode);
     }
 }
@@ -298,4 +338,30 @@ impl Pipeline {
 
         queue.submit([encoder.finish()]);
     }
+}
+
+fn key_to_digit(key: KeyCode) -> Option<usize> {
+    Some(match key {
+        KeyCode::Digit0 => 0,
+        KeyCode::Digit1 => 1,
+        KeyCode::Digit2 => 2,
+        KeyCode::Digit3 => 3,
+        KeyCode::Digit4 => 4,
+        KeyCode::Digit5 => 5,
+        KeyCode::Digit6 => 6,
+        KeyCode::Digit7 => 7,
+        KeyCode::Digit8 => 8,
+        KeyCode::Digit9 => 9,
+        KeyCode::Numpad0 => 0,
+        KeyCode::Numpad1 => 1,
+        KeyCode::Numpad2 => 2,
+        KeyCode::Numpad3 => 3,
+        KeyCode::Numpad4 => 4,
+        KeyCode::Numpad5 => 5,
+        KeyCode::Numpad6 => 6,
+        KeyCode::Numpad7 => 7,
+        KeyCode::Numpad8 => 8,
+        KeyCode::Numpad9 => 9,
+        _ => return None,
+    })
 }

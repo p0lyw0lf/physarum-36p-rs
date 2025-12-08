@@ -187,7 +187,10 @@ impl AllSettings {
         }
     }
 
-    fn set_index(&mut self, index: usize) {
+    pub fn set_index(&mut self, index: usize) {
+        if index >= self.presets.len() {
+            return;
+        }
         self.index = index;
         self.settings = self.presets[self.index].clone();
         self.dirty = false;

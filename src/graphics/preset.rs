@@ -7,14 +7,26 @@ use winit::dpi::PhysicalSize;
 
 use crate::constants::PLAYBACK_WIDTH;
 use crate::constants::{FFT_WIDTH, HEADER_HEIGHT};
+use crate::graphics::text::COLOR_GREEN;
 use crate::graphics::text::{COLOR_WHITE, FONT_SIZE};
 
 pub struct Text {
     section: OwnedSection,
-    /// The preset index to render
-    index: usize,
-    /// Whether this index is "dirty" (has changes that are not reflected in the preset)
-    dirty: bool,
+}
+
+pub enum PresetMode {
+    Normal,
+    Dirty,
+    Selecting,
+}
+
+impl PresetMode {
+    fn color(&self) -> [f32; 4] {
+        match self {
+            PresetMode::Normal | PresetMode::Dirty => COLOR_WHITE,
+            PresetMode::Selecting => COLOR_GREEN,
+        }
+    }
 }
 
 impl Text {
@@ -23,8 +35,6 @@ impl Text {
             section: Section::default()
                 .with_layout(Layout::default_wrap().h_align(HorizontalAlign::Right))
                 .to_owned(),
-            index: 0,
-            dirty: false,
         }
     }
 
@@ -37,24 +47,22 @@ impl Text {
         self.section.screen_position = ((new_size.width - FFT_WIDTH) as f32, 0.0);
     }
 
-    pub fn set_index(&mut self, index: usize) {
-        self.index = index;
-        self.update_text();
-    }
-
-    pub fn set_dirty(&mut self, dirty: bool) {
-        self.dirty = dirty;
-        self.update_text();
-    }
-
-    fn update_text(&mut self) {
-        let text = format!("{}{}", if self.dirty { "*" } else { "" }, self.index + 1);
+    pub fn update(&mut self, index: usize, mode: PresetMode) {
+        let text = format!(
+            "{}{}",
+            if matches!(mode, PresetMode::Dirty) {
+                "*"
+            } else {
+                ""
+            },
+            index + 1
+        );
         self.section.text.clear();
         self.section.text.push(
             OwnedText::default()
                 .with_text(text)
                 .with_scale(FONT_SIZE)
-                .with_color(COLOR_WHITE),
+                .with_color(mode.color()),
         );
     }
 }

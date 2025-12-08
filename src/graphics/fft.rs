@@ -140,7 +140,7 @@ impl Pipeline {
     pub fn set_mode(&mut self, queue: &wgpu::Queue, mode: Mode) {
         let highlighted_index = match mode {
             Mode::Fft { index, param: _ } => Some(index.0),
-            Mode::Normal | Mode::Base(_) => None,
+            Mode::Normal | Mode::EnteringNumber(_) | Mode::Base(_) => None,
         };
         let color_data: Vec<glam::Vec4> = (0..NUM_BINS)
             .map(|index| {

@@ -196,7 +196,7 @@ impl Text {
 impl From<Mode> for TextMode {
     fn from(mode: Mode) -> Self {
         match mode {
-            Mode::Normal | Mode::Base(_) => Self::Base,
+            Mode::Normal | Mode::EnteringNumber(_) | Mode::Base(_) => Self::Base,
             Mode::Fft { .. } => Self::Fft,
         }
     }
